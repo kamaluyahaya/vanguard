@@ -14,7 +14,6 @@ import ProfilePanel from "./profile/page"
 import EnrollStaffPanel from "./staff/page"
 import StaffPanel from "./staff-record/page"
 import Sidebar from "../components/admin/sidebar"
-import { useRouter } from "next/navigation"
 import ChangePasswordPage from "./password/page"
 
 const PANELS: Record<string, React.ReactNode> = {
@@ -37,7 +36,6 @@ export default function AdminPage(): React.ReactElement {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userName, setUserName] = useState("Admin")
 
-  const router = useRouter()
 
   // Close drawer on Escape
   useEffect(() => {

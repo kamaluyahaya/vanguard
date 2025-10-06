@@ -211,7 +211,6 @@ export default function Navbar() {
 
             <div className="mt-6 px-6">
               <Link
-                href="/investor/login"
                 onClick={() => {
                   setOpen(false)
                   setSignupOpen(true)
