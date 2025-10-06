@@ -89,7 +89,7 @@ export default function Navbar() {
              </div>
              <div>
                <div className="font-bold text-lg text-white">Vanguard</div>
-               <div className="text-sm text-slate-400">Investor dashboard</div>
+               <div className="text-xs text-slate-500 -mt-0.5">Coins · Tesla · Picks</div>
              </div>
            </div>
       {/* Center: Nav capsule (shows from md and up) */}
