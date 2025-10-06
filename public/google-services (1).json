@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "593887303655",
+    "project_id": "vanguardxhub",
+    "storage_bucket": "vanguardxhub.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:593887303655:android:3c31886491f644d32c8f42",
+        "android_client_info": {
+          "package_name": "vanguardxhub.ksofttechnova.com"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "593887303655-rcqtur0g93ftrhprhu90mk7vbcvauv0u.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC4r3lNdbS6QDJvNwwOBn5FLtm9ITq257I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "593887303655-rcqtur0g93ftrhprhu90mk7vbcvauv0u.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

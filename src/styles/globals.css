@@ -1,0 +1,140 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@import "tailwindcss";
+
+/* globals.css */
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/Geist-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900; /* variable font range */
+  font-style: normal;
+  font-display: swap; /* ensures text is visible while font loads */
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/GeistMono-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+:root {
+    --font-geist-sans: "Geist", sans-serif;
+  --font-geist-mono: "Geist Mono", monospace;
+  --background: #db4444;
+  --foreground: #171717;
+  --font-poppins: 'Poppins', sans-serif;
+}
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #1d1e1f;
+  }
+}
+
+
+:root{
+  --bg-navy: #04102b;
+  --flash-color-1: 255,140,20;
+  --flash-color-2: 255,190,80;
+  --glob-size: 80vmax;   /* keep large for wide flood; tune if needed */
+  --glob-blur: 88px;
+  --glob-opacity: 0.30;
+}
+
+/* base body */
+body.bg-sun-static {
+  background: var(--bg-navy);
+  color: #eaf4ff;
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden; /* keep horizontal hidden */
+  /* DON'T set overflow-y:hidden globally if your page needs to scroll */
+}
+
+/* decorative container: fixed + clipped so glows cannot create page scroll */
+.sun-static {
+  position: fixed;    /* <-- important: fixed keeps it out of document flow */
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;   /* <-- clip oversized blurred globs so no scrollbar */
+}
+
+/* each globe */
+.sun-static .g {
+  position: absolute;
+  width: var(--glob-size);
+  height: var(--glob-size);
+  border-radius: 50%;
+  filter: blur(var(--glob-blur));
+  mix-blend-mode: screen;
+  opacity: var(--glob-opacity);
+  transform: translate(-50%, -50%);
+  background: radial-gradient(
+    circle at 35% 35%,
+    rgba(var(--flash-color-1), 1) 0%,
+    rgba(var(--flash-color-2), 0.85) 28%,
+    rgba(255,255,255,0.04) 60%,
+    transparent 85%
+  );
+  will-change: transform, opacity; /* performance hint */
+}
+
+/* FOUR glows: left-top, left-bottom, right-top, right-bottom */
+/* Top-left */
+.sun-static .g1 { left: -10%; top: -12%; opacity: 0.36; }
+
+/* Bottom-left */
+.sun-static .g2 { left: -10%; top: 112%; opacity: 0.34; }
+
+/* Top-right */
+.sun-static .g3 { left: 110%; top: -12%; opacity: 0.34; }
+
+/* Bottom-right */
+.sun-static .g4 { left: 110%; top: 112%; opacity: 0.36; }
+
+/* responsive tuning */
+@media (max-width: 768px) {
+  :root { --glob-size: 110vmax; --glob-blur: 72px; --glob-opacity: 0.32; }
+  /* soften offsets on small screens so glows remain off-screen but still visible */
+  .sun-static .g1, .sun-static .g2 { left: -6%; }
+  .sun-static .g3, .sun-static .g4 { left: 106%; }
+}
+
+/* accessibility reduced-glow helper */
+body.reduced-glow .sun-static .g {
+  opacity: 0.14 !important;
+  filter: blur(48px) !important;
+}
+
+
+
+@keyframes borderMove {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-borderMove {
+  background-size: 400% 400%;
+  animation: borderMove 8s linear infinite;
+}
+
+/* optional: subtle card entrance when section mounts */
+@keyframes subtleFadeUp {
+  from { opacity: 0; transform: translateY(10px) scale(.995); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.group > .relative {
+  animation: subtleFadeUp 500ms ease both;
+}
