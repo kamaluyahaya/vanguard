@@ -225,7 +225,7 @@ export default function Navbar() {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 text-sm text-slate-500 border-t pt-10">
+        <div className="px-6 py-4 text-sm text-slate-500  pt-14">
           <p className="mb-1">Try any paid plan risk-free for 7 days. Cancel anytime.</p>
           <p className="text-xs">Support: support@Vanguardxhub.com</p>
         </div>
