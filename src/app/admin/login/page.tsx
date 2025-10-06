@@ -52,7 +52,7 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-900 text-white">
+    <div className="flex items-center justify-center min-h-screen text-white">
       <div className="bg-white/5 p-8 rounded-xl w-full max-w-md border border-white/10 shadow-lg">
         <h1 className="text-3xl font-bold mb-6 text-center">Admin Login</h1>
 
