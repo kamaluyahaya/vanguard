@@ -177,7 +177,7 @@ export default function Navbar() {
              </div>
              <div>
                <div className="font-bold text-lg text-slate-700">Vanguard</div>
-               <div className="text-sm text-slate-400">Investor dashboard</div>
+                 <div className="text-xs text-slate-500 -mt-0.5">Coins · Tesla · Picks</div>
              </div>
            </div>
 
