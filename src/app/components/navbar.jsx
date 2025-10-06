@@ -211,6 +211,7 @@ export default function Navbar() {
 
             <div className="mt-6 px-6">
               <Link
+                href=""
                 onClick={() => {
                   setOpen(false)
                   setSignupOpen(true)
