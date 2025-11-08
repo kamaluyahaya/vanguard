@@ -64,7 +64,7 @@ export default function CreateCustomerForm(): JSX.Element {
   }
 
   return (
-    <section className="max-w-lg mx-auto py-10">
+    <section className="container mx-auto py-10">
       <h1 className="text-2xl md:text-4xl text-center font-bold mb-6"></h1>
               <h1 className="text-2xl py-5 text-center md:text-5xl lg:text-6xl font-bold mb-6">[create new customer]</h1>
 

@@ -294,7 +294,7 @@ export default function Home() {
             },
             {
               id: "3",
-              name: "James Okoro",
+              name: "Richard Brymo.",
               role: "Head of Technology",
               bio: "Building secure, reliable, and user-friendly platforms for investors.",
                     image: "/team3.jpg",

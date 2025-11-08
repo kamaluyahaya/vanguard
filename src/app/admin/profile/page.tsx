@@ -82,7 +82,15 @@ export default function ProfilePanel(): JSX.Element {
         setDepartment(record?.department ?? null);
         setPosition(record?.position ?? null);
         setIsActive(Boolean(record?.is_active ?? true));
-      } catch (err: unknown) {
+      } catch (err: unknown) { 
+
+        if (err instanceof DOMException && err.name === "AbortError") {
+          // Ignore AbortError (happens in dev due to StrictMode double-invoke)
+          console.debug("Profile fetch aborted (safe to ignore).");
+          return;
+        }
+
+
   if (err instanceof Error) {
     console.error("fetch profile error:", err);
     setError(err.message || "Failed to fetch profile");
