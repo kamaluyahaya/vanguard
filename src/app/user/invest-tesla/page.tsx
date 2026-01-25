@@ -170,15 +170,15 @@ export default function Home() {
   const [user, setUser] = useState<any | null>(null);
   useEffect(() => {
     try {
-      const rawAuth = localStorage.getItem("auth");
+      const rawAuth = localStorage.getItem("user_auth");
       if (rawAuth) {
         const parsed = JSON.parse(rawAuth);
         if (parsed?.user) return setUser(parsed.user);
         if (parsed?.token && parsed?.user) return setUser(parsed.user);
       }
-      const rawUser = localStorage.getItem("user");
+      const rawUser = localStorage.getItem("user_token");
       if (rawUser) return setUser(JSON.parse(rawUser));
-      const alt = localStorage.getItem("auth");
+      const alt = localStorage.getItem("user_auth");
       if (alt) {
         try {
           const p = JSON.parse(alt);

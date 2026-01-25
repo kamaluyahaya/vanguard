@@ -34,6 +34,8 @@ export default function UserSidebar({
     { id: "user/dashboard", label: "Dashboard", icon: LayoutDashboardIcon },
     { id: "user/invest-tesla", label: "Invest in Tesla", icon: CreditCard },
     { id: "user/invest-coins", label: "Invest in Coins", icon: FileText },
+    { id: "user/my-investments", label: "My Investment", icon: FileText },
+    { id: "user/withdraw-request", label: "Withdraw", icon: FileText },
     // { id: "user/message-dm", label: "Message", icon: MessageCircle },
     { id: "user/notices", label: "Notices", icon: Megaphone },
     { id: "user/support", label: "Support", icon: Mail },
@@ -45,13 +47,14 @@ export default function UserSidebar({
     "dashboard": "/dashboard",
     "invest-tesla": "/invest/tesla",
     "invest-coins": "/invest/coins",
+    "withdraw-request": "/withdraw-request",
     // "message-dm": "/message-dm",
     "notices": "/notices",
     "support": "/support",
     "profile": "/profile",
   }
 
-  interface LocalUser {
+interface LocalUser {
   full_name?: string
   name?: string
   email?: string
@@ -99,15 +102,15 @@ const [localUser, setLocalUser] = useState<LocalUser | null>(null)
 
   const getStoredAuth = () => {
     try {
-      const rawAuth = localStorage.getItem("auth")
+      const rawAuth = localStorage.getItem("user_auth")
       if (rawAuth) {
         try {
           const parsed = JSON.parse(rawAuth)
           if (parsed?.token || parsed?.user) return parsed
         } catch {}
       }
-      const token = localStorage.getItem("token")
-      const userRaw = localStorage.getItem("user")
+      const token = localStorage.getItem("user_token")
+      const userRaw = localStorage.getItem("user_token")
       const user = userRaw ? JSON.parse(userRaw) : null
       if (token || user) return { token, user }
       return null
@@ -122,9 +125,8 @@ const [localUser, setLocalUser] = useState<LocalUser | null>(null)
         onLogout()
         return
       }
-      localStorage.removeItem("token")
-      localStorage.removeItem("user")
-      localStorage.removeItem("auth")
+      localStorage.removeItem("user_token")
+      localStorage.removeItem("user_auth")
       window.location.href = "/"
     } catch (e) {
       console.error("logout error", e)
@@ -134,7 +136,7 @@ const [localUser, setLocalUser] = useState<LocalUser | null>(null)
 
    useEffect(() => {
     if (typeof window !== "undefined") {
-      const rawAuth = localStorage.getItem("auth")
+      const rawAuth = localStorage.getItem("user_auth")
   
       if (!rawAuth) {
         // No auth found, redirect immediately

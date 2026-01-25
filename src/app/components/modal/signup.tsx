@@ -65,9 +65,9 @@ const [googleLoading, setGoogleLoading] = useState(false)
 const saveAuth = (token: string, userObj: AuthUser) => {
   try {
     const payload = { token, user: userObj, savedAt: new Date().toISOString() }
-    localStorage.setItem("auth", JSON.stringify(payload))
+    localStorage.setItem("user_auth", JSON.stringify(payload))
     // optional quick access
-    localStorage.setItem("token", token)
+    localStorage.setItem("user_token", token)
   } catch (e) {
     console.warn("Failed to save auth to localStorage", e)
   }

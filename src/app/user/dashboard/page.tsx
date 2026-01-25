@@ -2,474 +2,561 @@
 import Image from "next/image"
 import { useEffect, useMemo, useState } from "react"
 import { Menu, Search, X } from "lucide-react"
-import TeslaInvestmentModal from "./../../components/modal/tesla-investment-modal"
-import SignupModal from "./../../components/modal/signup"
 import UserSidebar from "./../../components/user/sidebar"
 import { useRouter } from "next/navigation"
-import InvestmentDetailModal from "@/app/components/modal/investmentDetails"
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"
+const BACKEND = "http://localhost:4000"
+const COINLORE = "https://api.coinlore.net/api/tickers/?start=100&limit=100"
 
-type TeslaRaw = {
-  tesla_id: string
-  investment_name: string
-  slug?: string
-  category?: string
-  min_investment?: string | number
-  expected_return?: string | number
-  duration?: string
-  risk?: string
-  is_featured?: number | boolean
-  created_at?: string
-  overview?: string
-}
-
-type CoinRaw = {
-  coin_id: string
-  coin_name: string
-  slug?: string
-  category?: string
-  price?: string | number
-  market_cap?: string | number
-  hours?: number
-  risk?: string
-  is_featured?: number | boolean
-  created_at?: string
-  overview?: string
-}
-
-
-type Investment = {
-  id: string // "tesla:1" or "coin:2"
-  source: "tesla" | "coin"
+type CoinLoreRaw = {
+  id: string
+  symbol: string
   name: string
-  slug?: string
-  category?: string
-  min_investment?: string | number | null
-  expected_return?: string | number | null
-  price?: string | number | null
-  market_cap?: string | number | null
-  duration?: string | null
-  hours?: number | null
-  risk?: string | null
-  is_featured?: number | boolean
-  created_at?: string | null
-  raw: any
-}
-
-function useDebounce<T>(value: T, delay = 350) {
-  const [v, setV] = useState(value)
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), delay)
-    return () => clearTimeout(t)
-  }, [value, delay])
-  return v
+  nameid: string
+  rank: number
+  price_usd: string
+  percent_change_24h: string
+  percent_change_1h: string
+  percent_change_7d: string
+  price_btc: string
+  market_cap_usd: string
+  volume24: number
+  volume24a: number
+  csupply: string
+  tsupply: string
+  msupply: string
+  [k: string]: any
 }
 
 export default function Home() {
-  const [open, setOpen] = useState(false) // Tesla modal
-  const [signupOpen, setSignupOpen] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(false) // mobile toggle
-  const [active, setActive] = useState<string>("dashboard")
-  const [userName, setUserName] = useState<string>("Investor")
-  const [userEmail, setUserEmail] = useState<string>("")
-
-  const [tesla, setTesla] = useState<TeslaRaw[]>([])
-const [coins, setCoins] = useState<CoinRaw[]>([])
-const [user, setUser] = useState<{ name?: string; full_name?: string; email?: string; profile_image?: string; photo?: string } | null>(null)
-
-
-  const router = useRouter()
-
-  const [query, setQuery] = useState("")
-  const debounced = useDebounce(query, 300)
-  const [category, setCategory] = useState<string>("All")
-
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [coins, setCoins] = useState<CoinLoreRaw[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-const [selectedInv, setSelectedInv] = useState<Investment | null>(null)
-const [detailOpen, setDetailOpen] = useState(false)
-  const [page, setPage] = useState(1)
-  const perPage = 12
+  const [query, setQuery] = useState("")
+  const [selected, setSelected] = useState<CoinLoreRaw | null>(null)
+  const [user, setUser] = useState<any>(null)
+  const [userBalance, setUserBalance] = useState<number | null>(null)
+  const router = useRouter()
 
-  // Fetch once on mount (no query/category on backend)
+      const getStoredAuth = () => {
+    try {
+      const rawAuth = localStorage.getItem("user_auth")
+      if (rawAuth) {
+        try {
+          const parsed = JSON.parse(rawAuth)
+          if (parsed?.token || parsed?.user) return parsed
+        } catch {}
+      }
+      const token = localStorage.getItem("token")
+      const userRaw = localStorage.getItem("user")
+      const user = userRaw ? JSON.parse(userRaw) : null
+      if (token || user) return { token, user }
+      return null
+    } catch (e) {
+      return null
+    }
+  }
+
+
+  // default invest pct
+  const [investPct, setInvestPct] = useState<number>(20) // default 20%
+  useEffect(() => {
+    setInvestPct(20)
+  }, [selected])
+
   useEffect(() => {
     const ac = new AbortController()
-    const fetchAll = async () => {
+    const load = async () => {
       try {
         setLoading(true)
         setError(null)
-        const url = new URL(`${BACKEND}/api/investments`)
-        url.searchParams.set("limit", "200")
-        url.searchParams.set("offset", "0")
-
-        const res = await fetch(url.toString(), { signal: ac.signal })
-        if (!res.ok) {
-          const body = await res.text().catch(() => null)
-          throw new Error(`Failed to load: ${res.status} ${body || res.statusText}`)
-        }
+        const res = await fetch(COINLORE, { signal: ac.signal })
+        if (!res.ok) throw new Error(`Failed to fetch coinlore: ${res.status}`)
         const json = await res.json()
-        const data = json?.data ?? json
-        setTesla(Array.isArray(data?.tesla) ? data.tesla : [])
-        setCoins(Array.isArray(data?.coins) ? data.coins : [])
-     } catch (err: unknown) {
-  if ((err as { name?: string }).name === "AbortError") return
-  console.error(err)
-  setError((err as { message?: string }).message || "Failed to fetch investments")
-}finally {
+        const list = Array.isArray(json?.data) ? json.data : []
+        // normalize simple types
+        const mapped = list.map((c: any) => ({
+          ...c,
+          id: String(c.id ?? ""),
+          price_usd: String(c.price_usd ?? c.price ?? "0"),
+          volume24: Number(c.volume24 ?? 0),
+          volume24a: Number(c.volume24a ?? 0),
+          market_cap_usd: String(c.market_cap_usd ?? c.market_cap ?? "0"),
+        }))
+        setCoins(mapped)
+      } catch (e: any) {
+        if (e.name === "AbortError") return
+        console.error(e)
+        setError(String(e?.message ?? e))
+      } finally {
         setLoading(false)
       }
     }
-    fetchAll()
+    load()
     return () => ac.abort()
   }, [])
 
-  // unified list (raw combined)
- const unified = useMemo<Investment[]>(() => {
-  const t = tesla.map((r) => ({
-    id: `tesla:${r.tesla_id}`,
-    source: "tesla" as const,
-    name: r.investment_name,
-    slug: r.slug,
-    category: r.category,
-    min_investment: r.min_investment,
-    expected_return: r.expected_return,
-    duration: r.duration,
-    risk: r.risk,
-    is_featured: r.is_featured,
-    created_at: r.created_at,
-    raw: r,
-  }))
 
-  const c = coins.map((r) => ({
-    id: `coin:${r.coin_id}`,
-    source: "coin" as const,
-    name: r.coin_name,
-    slug: r.slug,
-    category: r.category,
-    price: r.price,
-    market_cap: r.market_cap,
-    hours: r.hours,
-    risk: r.risk,
-    is_featured: r.is_featured,
-    created_at: r.created_at,
-    raw: r,
-  }))
-
-  return [...t, ...c].sort((a, b) => {
-    const ta = a.created_at ? new Date(a.created_at).getTime() : 0
-    const tb = b.created_at ? new Date(b.created_at).getTime() : 0
-    return tb - ta
-  })
-}, [tesla, coins])
-
-
-  // categories derived from the full set (so buttons always show available categories)
-  const categories = useMemo(() => {
-    const set = new Set<string>(["All"])
-    unified.forEach((i) => {
-      if (i.category) set.add(i.category)
-    })
-    return Array.from(set)
-  }, [unified])
-
-  // filtered list (client-side search + category) — debounced search
-  const filtered = useMemo(() => {
-    const term = String(debounced || "").trim().toLowerCase()
-    let data = unified
-
-    if (category && category !== "All") {
-      data = data.filter((i) => String(i.category || "").toLowerCase() === String(category || "").toLowerCase())
-    }
-
-    if (term.length > 0) {
-      data = data.filter((i) => {
-        // check main name + slug + overview + category
-        const overview = (i.raw?.overview || "").toString().toLowerCase()
-        const name = (i.name || "").toString().toLowerCase()
-        const slug = (i.slug || "").toString().toLowerCase()
-        const cat = (i.category || "").toString().toLowerCase()
-        return name.includes(term) || overview.includes(term) || slug.includes(term) || cat.includes(term)
-      })
-    }
-
-    return data
-  }, [unified, debounced, category])
-
-  // pagination based on filtered
-  const total = filtered.length
-  const pages = Math.max(1, Math.ceil(total / perPage))
-  const pageData = useMemo(() => {
-    setTimeout(() => {}, 0) // keep hook stable
-    const start = (page - 1) * perPage
-    return filtered.slice(start, start + perPage)
-  }, [filtered, page])
-
-  // reset page when filters change
   useEffect(() => {
-    setPage(1)
-  }, [debounced, category])
+  try {
+    const raw =
+      localStorage.getItem("user") ||
+      localStorage.getItem("auth")
 
-  // user load from local storage (unchanged)
-  useEffect(() => {
+    if (!raw) return
+
+    const parsed = JSON.parse(raw)
+    const u = parsed.user ?? parsed
+
+    setUser(u)
+  } catch (e) {
+    console.error("Failed to load user", e)
+  }
+}, [])
+
+useEffect(() => {
+  const fetchWallet = async () => {
     try {
-      const rawAuth = localStorage.getItem("auth")
-      if (rawAuth) {
-        const parsed = JSON.parse(rawAuth)
-        if (parsed?.user) return setUser(parsed.user)
-        if (parsed?.token && parsed?.user) return setUser(parsed.user)
-      }
-      const rawUser = localStorage.getItem("user")
-      if (rawUser) return setUser(JSON.parse(rawUser))
-      const alt = localStorage.getItem("auth")
-      if (alt) {
-        try {
-          const p = JSON.parse(alt)
-          if (p?.email) setUser(p)
-        } catch {}
-      }
-    } catch (e) {
-      console.warn("failed reading user from storage", e)
-    }
-  }, [])
+             const auth = getStoredAuth()
+    const user_id = auth?.user.id || null
+    // fetch(`/api/fund/user/${u.user_id}`)
+      const res = await fetch(`${BACKEND}/api/fund/user/${user_id}`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      })
+      if (!res.ok) throw new Error("Failed to fetch wallet")
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedUser = localStorage.getItem("user")
-      if (savedUser) {
-        const { name, email } = JSON.parse(savedUser)
-        setUserName(name || "Investor")
-        setUserEmail(email || "")
-      }
-    }
-  }, [])
+      const json = await res.json()
+      console.log("Wallet API response:", json) // DEBUG
 
-  const handleNavChange = (id: string) => {
-    if (id === "invest-tesla" || id === "post-tesla") {
-      setOpen(true)
-    } else if (id === "invest-coins" || id === "post-coins") {
-      setOpen(true)
-    } else if (id === "logout") {
-      localStorage.removeItem("user")
-      router.push("/login")
-    } else {
-      setActive(id)
+      setUserBalance(Number(json?.balance ?? 0))
+    } catch (err) {
+      console.error("Wallet fetch error:", err)
+      setUserBalance(0)
     }
-    setSidebarOpen(false)
   }
 
-  const displayName = user?.full_name || user?.name || "Investor"
-  const displayEmail = user?.email || ""
-  const avatar = user?.profile_image || user?.photo || null
-  const initial = String(displayName || "I").slice(0, 1).toUpperCase()
+  fetchWallet()
+}, [])
+
+
+
+  const filtered = useMemo(() => {
+    const t = query.trim().toLowerCase()
+    if (!t) return coins
+    return coins.filter((c) => {
+      return (
+        (c.name ?? "").toString().toLowerCase().includes(t) ||
+        (c.symbol ?? "").toString().toLowerCase().includes(t) ||
+        (c.nameid ?? "").toString().toLowerCase().includes(t)
+      )
+    })
+  }, [coins, query])
+
+  function makeVolumeSeries(a: number, b: number, points = 12) {
+    const arr: number[] = []
+    for (let i = 0; i < points; i++) {
+      const t = i / (points - 1)
+      const eased = 1 - Math.pow(1 - t, 2)
+      arr.push(a + (b - a) * eased)
+    }
+    return arr
+  }
+
+function Sparkline({
+  data,
+  height = 40,
+}: {
+  data: number[]
+  height?: number
+}) {
+  if (!data || data.length === 0) return null
+
+  const w = Math.max(120, data.length * 8)
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const range = max - min || 1
+
+  // 📉📈 detect trend
+  const isDown = data[data.length - 1] < data[0]
+
+  // Apple-like colors
+  const strokeColor = isDown ? "#ef4444" : "#22c55e" // red-500 | green-500
+  const fillColor = isDown
+    ? "rgba(239,68,68,0.12)"
+    : "rgba(34,197,94,0.12)"
+
+  const points = data
+    .map((v, i) => {
+      const x = (i / (data.length - 1)) * (w - 4) + 2
+      const y = ((max - v) / range) * (height - 4) + 2
+      return `${x},${y}`
+    })
+    .join(" ")
+
+  return (
+    <svg width={w} height={height} className="block">
+      {/* line */}
+      <polyline
+        fill="none"
+        stroke={strokeColor}
+        strokeWidth={1.8}
+        points={points}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+
+      {/* soft area fill */}
+      <polyline
+        fill={fillColor}
+        stroke="transparent"
+        points={`${points} ${w - 2},${height - 2} 2,${height - 2}`}
+      />
+    </svg>
+  )
+}
+
+
+  function fmt(n: string | number | null | undefined) {
+    if (n == null) return "-"
+    const num = Number(n)
+    if (Number.isNaN(num)) return String(n)
+    return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  // inside the modal where Invest button lives (React client component)
+async function handleInvest() {
+  try {
+    const userId = user?.user_id ?? 1;
+    const amt = userBalance ? (userBalance * investPct) / 100 : 0;
+    const payload = {
+      user_id: userId,
+      amount: Number(amt.toFixed(2)),
+      coin: selected,
+      duration_days: 30,
+      projected_pct: investPct
+    };
+
+    const res = await fetch(`${BACKEND}/api/fund/invest/init`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const json = await res.json();
+
+    if (!res.ok) {
+      alert(json.error || "Failed to initialize investment");
+      return;
+    }
+
+    // show success message
+    alert(json.message || "Initialized investment successfully");
+
+    // CLOSE THE MODAL
+    setSelected(null);
+
+    // NAVIGATE TO MY-INVESTMENTS PAGE
+    router.push("/user/my-investments");
+
+    // optional telegram share
+    if (json.telegram_url) {
+      window.open(json.telegram_url, "_blank");
+    } else {
+      const text = `I've initialized an investment of $${payload.amount} in ${selected!.symbol} — projected ${selected!.price_usd}.`;
+      window.open(`https://t.me/share/url?url=&text=${encodeURIComponent(text)}`, "_blank");
+    }
+
+  } catch (err) {
+    console.error("Invest error", err);
+    alert("An error occurred while initializing investment.");
+  }
+}
+
+
 
   return (
     <>
+      <div className="text-slate-100 antialiased">
+        <div className="md:hidden fixed top-4 left-4 z-50">
+          <button
+            onClick={() => setSidebarOpen((s) => !s)}
+            className="p-2 rounded-lg bg-white/6 backdrop-blur text-slate-100"
+          >
+            {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+        </div>
 
-    <div className="text-slate-100 antialiased">
-      {/* Mobile toggle button */}
-      <div className="md:hidden fixed top-4 left-4 z-50">
-        <button
-          onClick={() => setSidebarOpen((s) => !s)}
-          className="p-2 rounded-lg bg-white/6 backdrop-blur text-slate-100"
-        >
-          {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
-        </button>
-      </div>
+        <aside className={`fixed top-0 left-0 h-screen w-72 z-40 transform transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}>
+          <UserSidebar
+            active={"dashboard"}
+            onChange={(id: string) => {
+              if (id === "logout") {
+                localStorage.removeItem("user_token")
+                localStorage.removeItem("user_auth")
+                router.push("/")
+              }
+            }}
+            userName={user?.name ?? user?.full_name ?? "Investor"}
+            userEmail={user?.email ?? ""}
+          />
+        </aside>
 
-      {/* Sidebar */}
-      <aside
-        className={`fixed top-0 left-0 h-screen w-72 z-40 transform transition-transform duration-200
-          ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} 
-          md:translate-x-0 `}
-      >
-        <UserSidebar
-          active={active}
-          onChange={handleNavChange}
-          userName={userName}
-          userEmail={userEmail}
-          onLogout={() => {
-            localStorage.removeItem("auth")
-            localStorage.removeItem("user")
-            localStorage.removeItem("token")
-            router.push("/")
-          }}
-        />
-      </aside>
+        {sidebarOpen && <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-black/40 md:hidden" />}
 
-      {/* Overlay for mobile */}
-      {sidebarOpen && (
-        <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-black/40 md:hidden" />
-      )}
+        <main className="ml-0 md:ml-72 min-h-screen p-4 md:p-6">
 
-      {/* Main content */}
-      <main className="ml-0 md:ml-72 min-h-screen p-6">
-        {/* Center cluster: search icon + input + avatar + name */}
-        <header className="mb-6">
-          <div className="flex justify-center">
-            <div
-              className="flex items-center gap-2 px-3 py-2 rounded-full bg-white/6 border border-white/10
-                       max-w-6xl w-full mx-4"
-              style={{ alignItems: "center" }}
-            >
-              <button aria-label="Search" className="p-2 rounded-full hover:bg-white/8 flex items-center justify-center" onClick={() => {}}>
-                <Search size={16} />
-              </button>
-
-              <div className="flex items-center gap-2 flex-1 min-w-0">
+          <header className="mb-4">
+            <div className="flex justify-center">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-white/6 border border-white/10 max-w-6xl w-full mx-2">
+                <button aria-label="Search" className="p-2 rounded-full hover:bg-white/8 flex items-center justify-center">
+                  <Search size={16} />
+                </button>
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search investments, transactions, people..."
+                  placeholder="Search coins by name or symbol..."
                   className="w-full bg-transparent outline-none placeholder:text-slate-400 text-slate-100 text-sm"
-                  aria-label="Search"
                 />
-              </div>
-
-              <div className="hidden sm:block w-px h-6 bg-white/10 mx-2" />
-
-              <div className="flex items-center gap-2 ml-1">
-
-
-{avatar ? (
-  <Image
-    src={avatar}
-    alt={displayName}
-    width={36}
-    height={36}
-    className="rounded-full border border-white/10 object-cover"
-  />
-) : (
-  <div className="w-9 h-9 rounded-full bg-slate-700/30 flex items-center justify-center text-white font-medium">{initial}</div>
-)}
-
-                <div className="hidden sm:flex flex-col leading-tight">
-                  <span className="text-sm font-medium text-white">{displayName}</span>
-                  {displayEmail && <span className="text-xs text-slate-400">{displayEmail}</span>}
+                <div className="  w-px h-6 bg-white/10 mx-2" />
+                <div className=" flex-col text-right mr-2">
+                  <span className="text-xs text-slate-400">Wallet</span>
+                  <span className="text-sm font-medium text-white">${fmt(userBalance)}</span>
                 </div>
               </div>
             </div>
-          </div>
-        </header>
+          </header>
 
-        <h1 className="text-4xl py-5 text-center md:text-5xl lg:text-6xl font-bold mb-6">[investment opportunities]</h1>
+          <h1 className="text-center text-4xl md:text-5xl lg:text-6xl font-bold mb-6">[investment opportunity]</h1>
 
-        {/* category buttons + search summary */}
-        <div className="max-w-6xl mx-auto mb-4 px-4">
-          <div className="flex flex-wrap gap-2 justify-center">
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => { setCategory(cat); setPage(1) }}
-                className={`px-3 py-2 rounded-full text-sm font-medium transition ${
-                  category === cat ? "bg-amber-500 text-black" : "bg-white/6 text-slate-100 hover:bg-white/8"
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-        </div>
+          <div className="max-w-7xl mx-auto space-y-4">
+            <div className="bg-white/5 rounded-2xl border border-white/8 p-3">
+              <div className="p-2 border-b border-white/6 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-white">Coins</h3>
+                  <div className="text-xs text-slate-400">Showing {filtered.length} coins</div>
+                </div>
+                <div className="text-xs text-slate-400">Source: Coinlore</div>
+              </div>
 
-        {/* table card */}
-        <div className="container mx-auto bg-white/5 rounded-2xl border border-white/8 overflow-hidden">
-          <div className="p-4 border-b border-white/6 flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-white">Investments</h3>
-              <div className="text-xs text-slate-400">Showing {pageData.length} of {total}</div>
-            </div>
-            <div className="text-xs text-slate-400">Sort: <strong className="text-white">Recent</strong></div>
-          </div>
+              {loading && <div className="p-6 text-center text-slate-400">Loading…</div>}
+              {error && <div className="p-4 text-center text-red-400">{error}</div>}
 
-          {/* table header */}
-          <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-3 text-slate-300 text-xs uppercase tracking-wide">
-            <div className="col-span-4">Name</div>
-            <div className="col-span-2">Category</div>
-            <div className="col-span-2 text-right">Price / Min</div>
-            <div className="col-span-2 text-right">Return / MarketCap</div>
-            <div className="col-span-1 text-right">Risk</div>
-            <div className="col-span-1 text-right">Created</div>
-          </div>
-
-          {/* rows */}
-          <div>
-            {loading && (
-              <div className="p-6 text-center text-slate-400">Loading…</div>
-            )}
-
-            {error && (
-              <div className="p-4 text-center text-red-400">{error}</div>
-            )}
-
-            {!loading && pageData.length === 0 && (
-              <div className="p-6 text-center text-slate-400">No investments found.</div>
-            )}
-
-            {pageData.map((row) => (
-               <div key={row.id}
-  role="button"
-  onClick={() => { setSelectedInv(row); setDetailOpen(true) }}
-  className="grid grid-cols-1 md:grid-cols-12 gap-4 px-4 py-4 items-center hover:bg-white/4 transition cursor-pointer">
-                <div className="col-span-4">
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-slate-700/30 flex items-center justify-center text-sm font-semibold text-white">
-                      {row.source === "tesla" ? "F" : "C"}
+              <div>
+                {filtered.map((c) => (
+                  <div
+                    key={c.id}
+                    role="button"
+                    onClick={() => setSelected(c)}
+                    className="cursor-pointer hover:bg-white/4 transition p-3 md:p-4 border-b border-white/6 flex flex-col md:grid md:grid-cols-12 gap-3 items-center"
+                  >
+                    <div className="col-span-4 flex items-center gap-3 w-full">
+                      <div className="w-12 h-12 rounded-lg bg-slate-700/30 flex items-center justify-center text-sm font-semibold text-white shrink-0">
+                        {c.symbol?.slice(0, 3) ?? "C"}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-white truncate">{c.name}</div>
+                        <div className="text-xs text-slate-400 truncate">{c.symbol} • rank {c.rank}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-sm font-medium text-white">{row.name}</div>
-                      <div className="text-xs text-slate-400">{row.slug || "—"} • {row.source.toUpperCase()}</div>
+
+                    <div className="col-span-2 text-sm text-slate-300 w-full">
+                      {c.nameid ?? "—"}
+                    </div>
+
+                    <div className="col-span-2 text-right md:text-right text-sm">
+                      <div className="font-medium">${fmt(c.price_usd)}</div>
+                      <div className="text-xs text-slate-400">BTC {c.price_btc}</div>
+                    </div>
+
+                    <div className="col-span-2 text-right text-sm">
+                      <div className="font-medium">{c.market_cap_usd ? `$${fmt(c.market_cap_usd)}` : "-"}</div>
+                      <div className="text-xs text-slate-400">Vol24 ${fmt(c.volume24)}</div>
+                    </div>
+
+                    <div className="col-span-1 text-right md:text-right text-sm">
+                      <div className={`font-medium ${Number(c.percent_change_24h) >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                        {c.percent_change_24h ?? "-"}%
+                      </div>
+                    </div>
+
+                    <div className="col-span-1 text-right md:text-right">
+                      <div className="flex items-center justify-end">
+                        <div className="w-28">
+                          <Sparkline data={makeVolumeSeries(c.volume24a ?? 0, c.volume24 ?? 0, 12)} height={40} />
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-
-                <div className="col-span-2 text-sm text-slate-300">{row.category || "—"}</div>
-
-                <div className="col-span-2 text-right text-sm">
-                  {row.source === "tesla" ? (
-                    <div>{row.min_investment ? Number(row.min_investment).toLocaleString() : "-"}</div>
-                  ) : (
-                    <div>{row.price ? Number(row.price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "-"}</div>
-                  )}
-                </div>
-
-                <div className="col-span-2 text-right text-sm">
-                  {row.source === "tesla" ? (
-                    <div>{row.expected_return ? `${row.expected_return}%` : "-"}</div>
-                  ) : (
-                    <div>{row.market_cap ? Number(row.market_cap).toLocaleString() : "-"}</div>
-                  )}
-                </div>
-
-                <div className="col-span-1 text-right text-sm">{row.risk || "—"}</div>
-
-                <div className="col-span-1 text-right text-xs text-slate-400">{row.created_at ? new Date(row.created_at).toLocaleDateString() : "-"}</div>
+                ))}
               </div>
-            ))}
-          </div>
 
-          {/* pagination */}
-          <div className="flex items-center justify-between p-4 border-t border-white/6">
-            <div className="text-sm text-slate-400">Page {page} of {pages}</div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-                className="px-3 py-1 rounded bg-white/6 text-sm">Prev</button>
-              <button onClick={() => setPage((p) => Math.min(pages, p + 1))} disabled={page === pages}
-                className="px-3 py-1 rounded bg-white/6 text-sm">Next</button>
+              {!loading && filtered.length === 0 && <div className="p-6 text-center text-slate-400">No coins found.</div>}
             </div>
+          </div>
+        </main>
+      </div>
+
+      {/* Detail modal */}
+{selected && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="absolute inset-0 bg-black/60" onClick={() => setSelected(null)} />
+
+    <div className="relative w-full max-w-5xl bg-white rounded-2xl border border-slate-200 overflow-hidden h-[90vh] md:h-auto shadow-xl">
+      <div className="sticky top-0 z-10 bg-white/95 backdrop-blur px-4 py-3 border-b border-slate-200 flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-lg bg-slate-100 flex items-center justify-center text-sm font-semibold text-slate-900">
+            {selected.symbol?.slice(0, 3)}
+          </div>
+          <div>
+            <div className="text-lg font-bold text-slate-900">
+              {selected.name} <span className="text-sm text-slate-500">({selected.symbol})</span>
+            </div>
+            <div className="text-xs text-slate-500">rank {selected.rank} • {selected.nameid}</div>
           </div>
         </div>
 
-      </main>
+        <div className="flex items-center gap-2">
+          <a
+            href={process.env.NEXT_PUBLIC_TELEGRAM_LINK ?? `https://t.me/share/url?url=${encodeURIComponent('https://coinlore.com/coins/' + (selected.nameid||''))}&text=${encodeURIComponent(selected.name||selected.symbol||'')}`}
+            target="_blank"
+            rel="noreferrer"
+            className="px-3 py-1 rounded bg-amber-500 text-black text-sm font-medium"
+          >
+            Open Telegram
+          </a>
 
-      {/* Modals */}
-      <TeslaInvestmentModal isOpen={open} onClose={() => setOpen(false)} />
-      <SignupModal isOpen={signupOpen} onClose={() => setSignupOpen(false)} onSuccess={() => router.push("/dashboard")} />
+          <a
+            href={`https://t.me/share/url?url=${encodeURIComponent('https://coinlore.com/coins/' + (selected.nameid||''))}&text=${encodeURIComponent('Check out ' + (selected.name||selected.symbol||''))}`}
+            target="_blank"
+            rel="noreferrer"
+            className="px-3 py-1 rounded bg-slate-100 text-sm text-slate-700"
+          >
+            Share
+          </a>
+
+          <button onClick={() => setSelected(null)} className="px-3 py-1 rounded bg-slate-100 text-sm text-slate-700">
+            Close
+          </button>
+        </div>
+      </div>
+
+      <div className="overflow-y-auto px-4 py-4" style={{ maxHeight: 'calc(100vh - 88px)' }}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-3">
+            <div className="text-xs text-slate-500">Price (USD)</div>
+            <div className="text-2xl font-semibold text-slate-900">${fmt(selected.price_usd)}</div>
+
+            <div className="text-xs text-slate-500">Price (BTC)</div>
+            <div className="text-sm text-slate-700">{selected.price_btc}</div>
+
+            <div className="mt-3 text-xs text-slate-500">Projected return ({investPct}%)</div>
+            <div className="text-lg font-medium text-slate-900">
+              ${fmt(Number(selected.price_usd) * (1 + investPct / 100))}
+            </div>
+
+            <div className="mt-3 text-xs text-slate-500">Market Cap</div>
+            <div className="text-sm text-slate-700">${fmt(selected.market_cap_usd)}</div>
+
+            <div className="mt-3 text-xs text-slate-500">Circulating Supply</div>
+            <div className="text-sm text-slate-700">{selected.csupply ?? "-"}</div>
+
+            <div className="mt-4">
+              <label className="text-xs text-slate-500 block mb-1">Invest percent of wallet</label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={investPct}
+                  onChange={(e) => setInvestPct(Math.max(0, Math.min(100, Number(e.target.value || 0))))}
+                  className="w-24 px-2 py-1 rounded bg-white border border-slate-200 text-slate-900 text-sm"
+                />
+                <button
+                  onClick={() => setInvestPct(20)}
+                  className="px-3 py-1 rounded bg-slate-100 text-sm text-slate-700"
+                >
+                  Default 20%
+                </button>
+              </div>
+
+              <div className="mt-2 text-xs text-slate-500">
+                {userBalance != null ? (
+                  <>
+                    Investing <strong className="text-slate-900">{investPct}%</strong> = <strong className="text-slate-900">${fmt((userBalance * investPct) / 100)}</strong> of your wallet (${fmt(userBalance)})
+                  </>
+                ) : (
+                  <>Connect wallet to see invest amount</>
+                )}
+              </div>
+
+              <div className="mt-3 flex gap-2">
+                <button onClick={handleInvest} className="px-4 py-2 rounded bg-amber-500 text-black font-medium">
+                  Invest ({investPct}%)
+                </button>
+
+                <button
+                  onClick={() => {
+                    const amt = userBalance ? (userBalance * investPct) / 100 : 0
+                    const projected = amt * 1.2
+                    const text = `I'm investing ${fmt(amt)} in ${selected.symbol} — projected ${fmt(projected)} (+${investPct}%).`
+                    window.open(`https://t.me/share/url?url=&text=${encodeURIComponent(text)}`, "_blank")
+                  }}
+                  className="px-3 py-2 rounded bg-slate-100 text-slate-700"
+                >
+                  Quick share
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="col-span-1 md:col-span-2">
+            <div className="text-xs text-slate-500 mb-2">Volume (24h) trend</div>
+            <div className="bg-slate-50 p-3 rounded">
+              <Sparkline data={makeVolumeSeries(selected.volume24a ?? 0, selected.volume24 ?? 0, 24)} height={120} />
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div className="bg-slate-50 p-3 rounded border border-slate-100">
+                <div className="text-xs text-slate-500">Volume (24h)</div>
+                <div className="font-medium text-slate-900">${fmt(selected.volume24)}</div>
+              </div>
+              <div className="bg-slate-50 p-3 rounded border border-slate-100">
+                <div className="text-xs text-slate-500">Volume (24h a)</div>
+                <div className="font-medium text-slate-900">${fmt(selected.volume24a)}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="md:col-span-3 mt-2">
+            <div className="text-xs text-slate-500 mb-2">Full details</div>
+            <div className="bg-slate-50 p-3 rounded grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-slate-700">
+              <div><strong className="text-slate-900">ID:</strong> {selected.id}</div>
+              <div><strong className="text-slate-900">NameID:</strong> {selected.nameid}</div>
+              <div><strong className="text-slate-900">Rank:</strong> {selected.rank}</div>
+              <div><strong className="text-slate-900">1h %:</strong> {selected.percent_change_1h}%</div>
+              <div><strong className="text-slate-900">24h %:</strong> {selected.percent_change_24h}%</div>
+              <div><strong className="text-slate-900">7d %:</strong> {selected.percent_change_7d}%</div>
+              <div><strong className="text-slate-900">Market Cap USD:</strong> ${fmt(selected.market_cap_usd)}</div>
+              <div><strong className="text-slate-900">CSupply:</strong> {selected.csupply}</div>
+              <div><strong className="text-slate-900">TSupply:</strong> {selected.tsupply}</div>
+              <div><strong className="text-slate-900">MSupply:</strong> {selected.msupply || "-"}</div>
+              <div className="sm:col-span-2">
+                <strong className="text-slate-900">Raw object:</strong>
+                <pre className="text-sm max-h-40 overflow-auto text-slate-700 bg-slate-50 p-2 rounded">{JSON.stringify(selected, null, 2)}</pre>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
     </div>
-    <InvestmentDetailModal
-  isOpen={detailOpen}
-  onClose={() => { setDetailOpen(false); setSelectedInv(null) }}
-  inv={selectedInv}
-/>
+  </div>
+)}
+
+
     </>
   )
 }

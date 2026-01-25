@@ -15,6 +15,8 @@ import EnrollStaffPanel from "./staff/page"
 import StaffPanel from "./staff-record/page"
 import Sidebar from "../components/admin/sidebar"
 import ChangePasswordPage from "./password/page"
+import InvestmentsPage from "./investment/page"
+import AdminWithdrawPage from "./withdraw/page"
 
 const PANELS: Record<string, React.ReactNode> = {
   dashboard: <AdminDashboard />,
@@ -25,6 +27,8 @@ const PANELS: Record<string, React.ReactNode> = {
   "post-coins": <PostCoinsPanel />,
   "manage-investments": <ManageInvestmentsPanel />,
   "post-notice": <PostNoticePanel />,
+  "investment": <InvestmentsPage />,
+  "withdraw": <AdminWithdrawPage />,
   "password": <ChangePasswordPage />,
   contacts: <ContactsPanel />,
   profile: <ProfilePanel />,
@@ -35,7 +39,6 @@ export default function AdminPage(): React.ReactElement {
   const [active, setActive] = useState<string>("dashboard")
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userName, setUserName] = useState("Admin")
-
 
   // Close drawer on Escape
   useEffect(() => {

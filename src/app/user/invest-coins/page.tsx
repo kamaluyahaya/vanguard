@@ -172,9 +172,9 @@ export default function CoinsPage() {
         if (parsed?.user) return setUser(parsed.user);
         if (parsed?.token && parsed?.user) return setUser(parsed.user);
       }
-      const rawUser = localStorage.getItem("user");
+      const rawUser = localStorage.getItem("user_token");
       if (rawUser) return setUser(JSON.parse(rawUser));
-      const alt = localStorage.getItem("auth");
+      const alt = localStorage.getItem("user_auth");
       if (alt) {
         try {
           const p = JSON.parse(alt);

@@ -87,9 +87,9 @@ export default function NoticesPage() {
                   userName={userName}
                   userEmail={userEmail}
                   onLogout={() => {
-                    localStorage.removeItem("user");
-                    localStorage.removeItem("token");
-                    localStorage.removeItem("auth");
+                    localStorage.removeItem("user_token");
+                    localStorage.removeItem("user_token");
+                    localStorage.removeItem("user_auth");
                     router.push("/");
                   }}
                 />

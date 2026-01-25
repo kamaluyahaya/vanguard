@@ -17,6 +17,8 @@ type Customer = {
   updated_at?: string | null;
   firebase_uid?: string | null;
   password_hash?: string | null;
+  balance?: number | string | null;
+  wallet_balance?: number | string | null;
 };
 
 type Message = {
@@ -37,7 +39,14 @@ export default function ClientsPanel(): JSX.Element {
   const [limit, setLimit] = useState(10);
   const [selected, setSelected] = useState<Customer | null>(null);
 
-  // chat state
+  const [userBalances, setUserBalances] = useState<Record<number, number>>({});
+  const [balanceLoading, setBalanceLoading] = useState<Record<number, boolean>>({});
+
+  const [actionOpen, setActionOpen] = useState<"none" | "fund" | "withdraw">("none");
+  const [txnAmount, setTxnAmount] = useState<string>("");
+  const [txnLoading, setTxnLoading] = useState(false);
+  const [txnError, setTxnError] = useState<string | null>(null);
+
   const [chatOpen, setChatOpen] = useState(false);
   const [chatUser, setChatUser] = useState<Customer | null>(null);
   const [chatMessages, setChatMessages] = useState<Record<number, Message[]>>({});
@@ -45,7 +54,6 @@ export default function ClientsPanel(): JSX.Element {
   const [sending, setSending] = useState(false);
   const msgRef = useRef<HTMLDivElement | null>(null);
 
-  // Fetch customers
   useEffect(() => {
     let mounted = true;
     const ac = new AbortController();
@@ -68,13 +76,13 @@ export default function ClientsPanel(): JSX.Element {
         if (!mounted) return;
         setCustomers(Array.isArray(arr) ? arr : []);
       } catch (err: unknown) {
-          if (err instanceof Error) {
-            if (mounted) setError(err.message || "Failed to fetch customers");
-          } else {
-            console.error("Unexpected error:", err);
-            if (mounted) setError("Failed to fetch customers");
-          }
-        } finally {
+        if (err instanceof Error) {
+          if (mounted) setError(err.message || "Failed to fetch customers");
+        } else {
+          console.error("Unexpected error:", err);
+          if (mounted) setError("Failed to fetch customers");
+        }
+      } finally {
         if (mounted) setLoading(false);
       }
     };
@@ -86,7 +94,6 @@ export default function ClientsPanel(): JSX.Element {
     };
   }, []);
 
-  // filtering
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
     if (!term) return customers;
@@ -98,7 +105,6 @@ export default function ClientsPanel(): JSX.Element {
     });
   }, [customers, query]);
 
-  // paging
   const total = filtered.length;
   const pages = Math.max(1, Math.ceil(total / limit));
   const pageData = useMemo(() => {
@@ -106,15 +112,12 @@ export default function ClientsPanel(): JSX.Element {
     return filtered.slice(start, start + limit);
   }, [filtered, page, limit]);
 
-  // helpers
   const formatDate = (d?: string | null) => (d ? new Date(d).toLocaleString() : "-");
   const initials = (name?: string) =>
     (name ? name.split(" ").map((s) => s[0]).join("").slice(0, 2) : "U").toUpperCase();
 
-  // reset page on query/limit change
   useEffect(() => setPage(1), [query, limit]);
 
-  // chat helpers
   const scrollToBottom = () => {
     try {
       if (msgRef.current) {
@@ -126,7 +129,6 @@ export default function ClientsPanel(): JSX.Element {
   };
 
   useEffect(() => {
-    // when chatUser changes, load their messages
     if (chatUser) {
       loadMessages(chatUser.user_id);
     }
@@ -136,7 +138,6 @@ export default function ClientsPanel(): JSX.Element {
   useEffect(() => scrollToBottom(), [chatMessages, chatOpen]);
 
   const loadMessages = async (userId: number) => {
-    // if already loaded don't force reload (but you can change this behaviour)
     if (chatMessages[userId]?.length) return;
     try {
       const res = await fetch(`${BACKEND}/api/messages?user_id=${userId}`);
@@ -165,7 +166,7 @@ export default function ClientsPanel(): JSX.Element {
     if (!chatUser || !newMessage.trim()) return;
     const toId = chatUser.user_id;
     const fakeId = `tmp-${Date.now()}`;
-    const meId = 0; // NOTE: replace with real admin/user id if available in your app
+    const meId = 0;
     const msg: Message = {
       id: fakeId,
       from_user_id: meId,
@@ -174,7 +175,6 @@ export default function ClientsPanel(): JSX.Element {
       created_at: new Date().toISOString(),
     };
 
-    // optimistic update
     setChatMessages((prev) => {
       const prevList = prev[toId] ?? [];
       return { ...prev, [toId]: [...prevList, msg] };
@@ -184,7 +184,6 @@ export default function ClientsPanel(): JSX.Element {
     scrollToBottom();
 
     try {
-      // POST to backend
       const res = await fetch(`${BACKEND}/api/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -192,7 +191,6 @@ export default function ClientsPanel(): JSX.Element {
       });
       if (!res.ok) throw new Error("send failed");
       const saved = await res.json();
-      // replace temporary id with server id (if returned)
       setChatMessages((prev) => {
         const list = prev[toId] ?? [];
         return {
@@ -202,18 +200,135 @@ export default function ClientsPanel(): JSX.Element {
       });
     } catch (err) {
       console.error("Failed to send message", err);
-      // mark as failed - in this example we'll leave it but you could add a 'failed' flag
     } finally {
       setSending(false);
       scrollToBottom();
     }
   };
 
-  // send on Enter (without shift)
   const handleKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
+    }
+  };
+
+  const loadBalance = async (userId: number) => {
+    setBalanceLoading((s) => ({ ...s, [userId]: true }));
+    const existing = customers.find((c) => c.user_id === userId);
+    const maybe = existing?.balance ?? existing?.wallet_balance;
+    if (maybe != null) {
+      const num = Number(maybe);
+      if (!Number.isNaN(num)) {
+        setUserBalances((b) => ({ ...b, [userId]: num }));
+        setBalanceLoading((s) => ({ ...s, [userId]: false }));
+        return;
+      }
+    }
+
+    const endpoints = [
+      `${BACKEND}/api/customers/${userId}`,
+      `${BACKEND}/api/customers?user_id=${userId}`,
+      `${BACKEND}/api/fund/user/${userId}`,
+      `${BACKEND}/api/wallets/${userId}`,
+      `${BACKEND}/api/fund/admin/user/${userId}`,
+    ];
+
+    try {
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(ep, { method: "GET" });
+          if (!res.ok) continue;
+          const json = await res.json();
+          const candidates = [
+            json?.balance,
+            json?.wallet?.balance,
+            json?.data?.balance,
+            json?.data?.wallet?.balance,
+            json?.wallet_balance,
+            json?.amount,
+          ];
+          const found = candidates.find((c) => c !== undefined && c !== null);
+          if (found !== undefined && found !== null) {
+            const n = Number(found);
+            if (!Number.isNaN(n)) {
+              setUserBalances((b) => ({ ...b, [userId]: n }));
+              return;
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+      setUserBalances((b) => ({ ...b, [userId]: 0 }));
+    } finally {
+      setBalanceLoading((s) => ({ ...s, [userId]: false }));
+    }
+  };
+
+  useEffect(() => {
+    if (selected) {
+      loadBalance(selected.user_id);
+      setActionOpen("none");
+      setTxnAmount("");
+      setTxnError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  const performTxn = async (type: "fund" | "withdraw") => {
+    if (!selected) return;
+    setTxnError(null);
+    const amt = parseFloat(txnAmount);
+    if (Number.isNaN(amt) || amt <= 0) {
+      setTxnError("Enter a valid amount greater than 0");
+      return;
+    }
+
+    setTxnLoading(true);
+    try {
+      const url = `${BACKEND}/api/fund/admin/${type}`;
+      const body = { user_id: selected.user_id, amount: amt };
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => null);
+        throw new Error(text || `Failed to ${type} wallet`);
+      }
+      await res.json().catch(() => ({}));
+
+      setUserBalances((prev) => {
+        const prevVal = prev[selected.user_id];
+        if (typeof prevVal === "number") {
+          const newVal = type === "fund" ? prevVal + amt : prevVal - amt;
+          return { ...prev, [selected.user_id]: newVal };
+        }
+        return prev;
+      });
+
+      setTxnAmount("");
+      setActionOpen("none");
+      setTxnError(null);
+
+      try {
+        const cRes = await fetch(`${BACKEND}/api/customers/${selected.user_id}`);
+        if (cRes.ok) {
+          const cJson = await cRes.json();
+          const updated = Array.isArray(cJson) ? cJson[0] : cJson?.data ?? cJson;
+          if (updated) {
+            setCustomers((prev) => prev.map((p) => (p.user_id === selected.user_id ? { ...p, ...updated } : p)));
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    } catch (err: unknown) {
+      setTxnError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTxnLoading(false);
     }
   };
 
@@ -240,6 +355,7 @@ export default function ClientsPanel(): JSX.Element {
                 is_active: c.is_active,
                 created_at: c.created_at,
               }));
+              if (rows.length === 0) return;
               const csv = [
                 Object.keys(rows[0] || {}).join(","),
                 ...rows.map((r) => Object.values(r).map((v) => `"${String(v ?? "")}"`).join("")),
@@ -267,7 +383,7 @@ export default function ClientsPanel(): JSX.Element {
         ) : (
           <>
             <table className="w-full text-sm table-auto">
-              <thead className="text-slate-300 text-left">
+              <thead className="text-slate-500 text-left">
                 <tr>
                   <th className="py-2">Profile</th>
                   <th className="py-2">Name</th>
@@ -297,27 +413,17 @@ export default function ClientsPanel(): JSX.Element {
                     </td>
 
                     <td className="py-3">{c.full_name || "—"}</td>
-                    <td className="py-3 text-slate-300">{c.email || "—"}</td>
-                    <td className="py-3 text-slate-300">{c.phone || "—"}</td>
-                    <td className="py-3 text-slate-300">{formatDate(c.created_at)}</td>
-                    <td className="py-3 text-slate-300">{c.is_active ? "Yes" : "No"}</td>
+                    <td className="py-3 text-slate-400">{c.email || "—"}</td>
+                    <td className="py-3 text-slate-400">{c.phone || "—"}</td>
+                    <td className="py-3 text-slate-400">{formatDate(c.created_at)}</td>
+                    <td className="py-3 text-slate-400">{c.is_active ? "Yes" : "No"}</td>
                     <td className="py-3">
                       <div className="flex gap-2">
                         <button onClick={() => setSelected(c)} className="px-3 py-1 rounded-lg bg-white/6 text-sm">
                           View
                         </button>
-                        <button
-                          onClick={() => {
-                            setCustomers((prev) =>
-                              prev.map((p) => (p.user_id === c.user_id ? { ...p, is_active: p.is_active ? 0 : 1 } : p))
-                            );
-                          }}
-                          className="px-3 py-1 rounded-lg bg-white/6 text-sm"
-                        >
-                          Toggle
-                        </button>
+                       
 
-                        {/* Direct message (DM) button */}
                         <button
                           onClick={() => openChat(c)}
                           className="px-3 py-1 rounded-lg bg-white/6 text-sm"
@@ -361,38 +467,109 @@ export default function ClientsPanel(): JSX.Element {
         )}
       </div>
 
-      {/* Detail modal */}
+      {/* Detail modal (white background) */}
       {selected && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/40 p-4 z-50">
-          <div className="bg-white/3 rounded-2xl p-6 w-full max-w-2xl">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-lg">
             <div className="flex justify-between items-start">
               <div className="flex items-center gap-4">
                 {selected.profile_image ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={selected.profile_image} alt={selected.full_name || "profile"} className="w-14 h-14 rounded-full object-cover border border-white/10" />
+                  <img src={selected.profile_image} alt={selected.full_name || "profile"} className="w-14 h-14 rounded-full object-cover border border-slate-200" />
                 ) : (
-                  <div className="w-14 h-14 rounded-full bg-slate-700/30 flex items-center justify-center text-white font-medium text-lg">{initials(selected.full_name)}</div>
+                  <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 font-medium text-lg">{initials(selected.full_name)}</div>
                 )}
                 <div>
-                  <h4 className="text-lg font-semibold">{selected.full_name}</h4>
-                  <div className="text-xs text-slate-400">{selected.email}</div>
+                  <h4 className="text-lg font-semibold text-slate-900">{selected.full_name}</h4>
+                  <div className="text-xs text-slate-500">{selected.email}</div>
                 </div>
               </div>
 
-              <button onClick={() => setSelected(null)} className="text-slate-400">Close</button>
+              <button onClick={() => setSelected(null)} className="text-slate-600">Close</button>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-300">
-              <div><strong>Phone:</strong> {selected.phone || "-"}</div>
-              <div><strong>Active:</strong> {selected.is_active ? "Yes" : "No"}</div>
-              <div><strong>Firebase UID:</strong> {selected.firebase_uid || "-"}</div>
-              <div><strong>Created:</strong> {formatDate(selected.created_at)}</div>
-              <div className="col-span-2"><strong>Password hash:</strong> <div className="text-xs break-all mt-1">{selected.password_hash || "(hidden)"}</div></div>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm text-slate-700">
+              <div><strong>Phone:</strong> <span className="text-slate-600">{selected.phone || "-"}</span></div>
+              <div><strong>Active:</strong> <span className="text-slate-600">{selected.is_active ? "Yes" : "No"}</span></div>
+              <div><strong>Firebase UID:</strong> <span className="text-slate-600">{selected.firebase_uid || "-"}</span></div>
+              <div><strong>Created:</strong> <span className="text-slate-600">{formatDate(selected.created_at)}</span></div>
+              <div className="col-span-2"><strong>Password hash:</strong> <div className="text-xs break-all mt-1 text-slate-500">{selected.password_hash || "(hidden)"}</div></div>
+
+              {/* Balance row */}
+              <div className="col-span-2 mt-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-slate-500">Wallet balance</div>
+                    <div className="text-lg font-medium text-slate-900">
+                      {balanceLoading[selected.user_id] ? (
+                        <span className="text-slate-500">Loading…</span>
+                      ) : (
+                        <span>₦{(userBalances[selected.user_id] ?? (selected.balance ?? selected.wallet_balance ?? 0)).toLocaleString()}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setActionOpen((a) => (a === "fund" ? "none" : "fund"));
+                        setTxnError(null);
+                      }}
+                      className="px-3 py-2 rounded-xl bg-emerald-500 text-black font-medium"
+                    >
+                      Fund
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActionOpen((a) => (a === "withdraw" ? "none" : "withdraw"));
+                        setTxnError(null);
+                      }}
+                      className="px-3 py-2 rounded-xl bg-rose-500 text-black font-medium"
+                    >
+                      Withdraw
+                    </button>
+                  </div>
+                </div>
+
+                {actionOpen !== "none" && (
+                  <div className="mt-3 p-3 rounded-xl bg-slate-50 border border-slate-100">
+                    <div className="flex flex-col md:flex-row md:items-center gap-2">
+                      <input
+                        inputMode="decimal"
+                        value={txnAmount}
+                        onChange={(e) => setTxnAmount(e.target.value)}
+                        placeholder="Amount (e.g. 1500.00)"
+                        className="flex-1 rounded-lg p-2 border border-slate-200 bg-white text-sm"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => performTxn(actionOpen === "fund" ? "fund" : "withdraw")}
+                          disabled={txnLoading}
+                          className="px-3 py-2 rounded-lg bg-slate-100 text-slate-900"
+                        >
+                          {txnLoading ? "Processing…" : actionOpen === "fund" ? "Confirm fund" : "Confirm withdraw"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setActionOpen("none");
+                            setTxnAmount("");
+                            setTxnError(null);
+                          }}
+                          className="px-3 py-2 rounded-lg bg-slate-100 text-slate-900"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                    {txnError && <div className="mt-2 text-xs text-rose-500">{txnError}</div>}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="mt-6 flex gap-2">
-              <button className="px-4 py-2 rounded-xl bg-white/6">Suspend</button>
-              <button className="px-4 py-2 rounded-xl bg-white/6" onClick={() => openChat(selected)}>
+              <button className="px-4 py-2 rounded-xl bg-slate-100 text-slate-900">Suspend</button>
+              <button className="px-4 py-2 rounded-xl bg-slate-100 text-slate-900" onClick={() => openChat(selected)}>
                 Message
               </button>
             </div>
@@ -400,85 +577,85 @@ export default function ClientsPanel(): JSX.Element {
         </div>
       )}
 
-      {/* Chat panel */}
+      {/* Chat panel (white background) */}
       {chatOpen && chatUser && (
         <AnimatePresence>
-      <motion.div
-        className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-      >
-        <motion.div
-  className="w-full max-w-4xl bg-gradient-to-br from-[#071033] to-[#08162b] rounded-2xl border border-white/6 shadow-2xl text-white p-6 relative"
-  initial={{ y: 20, opacity: 0, scale: 0.98 }}
-  animate={{ y: 0, opacity: 1, scale: 1 }}
-  exit={{ y: 10, opacity: 0, scale: 0.99 }}
->
-  <button
-    aria-label="Close"
-    onClick={closeChat}
-    className="absolute right-6 top-6 w-9 h-9 rounded-full bg-amber-500 text-black flex items-center justify-center hover:bg-amber-400 transition"
-  >
-    <X size={20} />
-  </button>
-            <div className="flex items-center gap-3 p-4 border-b border-white/6">
-              {chatUser.profile_image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={chatUser.profile_image} className="w-10 h-10 rounded-full object-cover" alt={chatUser.full_name || "avatar"} />
-              ) : (
-                <div className="w-10 h-10 rounded-full bg-slate-700/30 flex items-center justify-center text-white font-medium">{initials(chatUser.full_name)}</div>
-              )}
-              <div className="flex-1">
-                <div className="font-semibold">{chatUser.full_name}</div>
-                <div className="text-xs text-slate-400">{chatUser.email}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => {/* open user profile perhaps */}} className="px-3 py-1 rounded-lg bg-white/6 text-sm">Profile</button>
-              </div>
-            </div>
-
-            <div ref={msgRef} className="flex-1 p-4 overflow-y-auto space-y-3" style={{ background: "linear-gradient(180deg, rgba(255,255,255,0.02), transparent)" }}>
-              {(chatMessages[chatUser.user_id] ?? []).map((m) => {
-                const mine = m.from_user_id === 0; // replace 0 with real current user id
-                return (
-                  <div key={String(m.id)} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${mine ? "bg-white/6" : "bg-white/5"}`}>
-                      <div className="whitespace-pre-wrap">{m.body}</div>
-                      <div className="text-xs text-slate-400 mt-2">{m.created_at ? new Date(m.created_at).toLocaleString() : ""}</div>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {(chatMessages[chatUser.user_id] ?? []).length === 0 && (
-                <div className="text-center text-slate-400">No messages yet — say hello 👋</div>
-              )}
-            </div>
-
-            <div className="p-3 border-t border-white/6">
-              <div className="flex items-end gap-2">
-                <textarea
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={`Message ${chatUser.full_name}... (Enter to send)`}
-                  className="flex-1 min-h-[44px] max-h-36 resize-none rounded-2xl p-3 bg-white/5 text-sm"
-                />
-                <div className="flex flex-col gap-2">
-                  <button
-                    onClick={sendMessage}
-                    disabled={sending || !newMessage.trim()}
-                    className="px-4 py-2 rounded-xl bg-white/6 disabled:opacity-50"
-                  >
-                    {sending ? "Sending…" : "Send"}
-                  </button>
+          <motion.div
+            className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="w-full max-w-4xl bg-white rounded-2xl border border-slate-200 shadow-2xl text-slate-900 p-6 relative"
+              initial={{ y: 20, opacity: 0, scale: 0.98 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 10, opacity: 0, scale: 0.99 }}
+            >
+              <button
+                aria-label="Close"
+                onClick={closeChat}
+                className="absolute right-6 top-6 w-9 h-9 rounded-full bg-slate-100 text-slate-900 flex items-center justify-center hover:bg-slate-200 transition"
+              >
+                <X size={20} />
+              </button>
+              <div className="flex items-center gap-3 p-4 border-b border-slate-100">
+                {chatUser.profile_image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={chatUser.profile_image} className="w-10 h-10 rounded-full object-cover" alt={chatUser.full_name || "avatar"} />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 font-medium">{initials(chatUser.full_name)}</div>
+                )}
+                <div className="flex-1">
+                  <div className="font-semibold text-slate-900">{chatUser.full_name}</div>
+                  <div className="text-xs text-slate-500">{chatUser.email}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => {/* open user profile perhaps */}} className="px-3 py-1 rounded-lg bg-slate-100 text-slate-900 text-sm">Profile</button>
                 </div>
               </div>
-            </div>
-                  </motion.div>
-                </motion.div>
-              </AnimatePresence>
+
+              <div ref={msgRef} className="flex-1 p-4 overflow-y-auto space-y-3" style={{ background: "transparent" }}>
+                {(chatMessages[chatUser.user_id] ?? []).map((m) => {
+                  const mine = m.from_user_id === 0;
+                  return (
+                    <div key={String(m.id)} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${mine ? "bg-slate-100" : "bg-slate-50"}`}>
+                        <div className="whitespace-pre-wrap text-slate-800">{m.body}</div>
+                        <div className="text-xs text-slate-500 mt-2">{m.created_at ? new Date(m.created_at).toLocaleString() : ""}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {(chatMessages[chatUser.user_id] ?? []).length === 0 && (
+                  <div className="text-center text-slate-500">No messages yet — say hello 👋</div>
+                )}
+              </div>
+
+              <div className="p-3 border-t border-slate-100">
+                <div className="flex items-end gap-2">
+                  <textarea
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={`Message ${chatUser.full_name}... (Enter to send)`}
+                    className="flex-1 min-h-[44px] max-h-36 resize-none rounded-2xl p-3 border border-slate-100 bg-white text-sm"
+                  />
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={sendMessage}
+                      disabled={sending || !newMessage.trim()}
+                      className="px-4 py-2 rounded-xl bg-slate-100 disabled:opacity-50 text-slate-900"
+                    >
+                      {sending ? "Sending…" : "Send"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        </AnimatePresence>
       )}
     </section>
   );

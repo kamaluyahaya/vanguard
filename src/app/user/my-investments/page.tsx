@@ -1,421 +1,472 @@
-"use client"
+"use client";
 
-import { useEffect, useMemo, useState } from "react"
-import { Menu, Search, X } from "lucide-react"
-import TeslaInvestmentModal from "../../components/modal/tesla-investment-modal"
-import SignupModal from "../../components/modal/signup"
-import InvestmentDetailModal from "../../components/modal/investmentDetails"
-import UserSidebar from "../../components/user/sidebar"
-import { useRouter } from "next/navigation"
+import { useEffect, useMemo, useState } from "react";
+import { Loader2, Menu, X, Share2, ExternalLink, Info, RefreshCw } from "lucide-react";
+import UserSidebar from "@/app/components/user/sidebar";
+import { useRouter } from "next/navigation";
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000"
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:5000";
 
-type RawTesla = {
-  tesla_id: string
-  investment_name: string
-  slug?: string
-  category?: string
-  min_investment?: number | string
-  expected_return?: number | string
-  duration?: string
-  risk?: string
-  is_featured?: number | boolean
-  created_at?: string
-  overview?: string
-  created_by?: string | number
+type ApiInvestment = {
+  investment_id: number;
+  user_id: number;
+  amount: string; // "900.00000000"
+  coin_id?: string | null;
+  coin_symbol?: string | null;
+  coin_name?: string | null;
+  coin_data?: string | null; // JSON string
+  price_usd?: string | null;
+  status?: string | null;
+  expected_return?: string | null;
+  actual_return?: string | null;
+  roi_percent?: string | null;
+  duration_days?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+type Investment = Omit<ApiInvestment, "amount" | "coin_data" | "price_usd" | "expected_return" | "actual_return" | "roi_percent"> & {
+  amount: number;
+  price_usd?: number | null;
+  expected_return?: number | null;
+  actual_return?: number | null;
+  roi_percent?: number | null;
+  coin_data_parsed?: any;
+};
+
+  interface LocalUser {
+  full_name?: string
+  name?: string
+  email?: string
+  profile_image?: string
+  photo?: string
+  [key: string]: any // fallback for extra properties
 }
 
-type RawCoin = {
-  coin_id: string
-  coin_name: string
-  slug?: string
-  category?: string
-  price?: number | string
-  market_cap?: number | string
-  hours?: number
-  risk?: string
-  is_featured?: number | boolean
-  created_at?: string
-  overview?: string
-  created_by?: string | number
+export default function InvestmentsPage() {
+  const [investments, setInvestments] = useState<Investment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [active, setActive] = useState("investments");
+  const [userName, setUserName] = useState("Investor");
+  const [userEmail, setUserEmail] = useState("");
+  const [selected, setSelected] = useState<Investment | null>(null);
+  const [localUser, setLocalUser] = useState<LocalUser | null>(null)
+
+  const router = useRouter();
+
+
+  // helper: parse JWT payload (base64url safe)
+const parseJwt = (token: string | null) => {
+  if (!token) return null
+  try {
+    const base64Url = token.split(".")[1]
+    if (!base64Url) return null
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/")
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    )
+    return JSON.parse(jsonPayload)
+  } catch {
+    return null
+  }
+}
+
+const getStoredAuth = () => {
+  try {
+    const rawAuth = localStorage.getItem("user_auth")
+    if (rawAuth) {
+      const parsed = JSON.parse(rawAuth)
+      if (parsed?.token || parsed?.user) return parsed
+    }
+
+    const token = localStorage.getItem("user_token")
+    const userRaw = localStorage.getItem("user")
+    const user = userRaw ? JSON.parse(userRaw) : null
+
+    if (token || user) return { token, user }
+    return null
+  } catch {
+    return null
+  }
 }
 
 
-type Investment = {
-  id: string // "tesla:1" or "coin:2"
-  source: "tesla" | "coin"
-  name: string
-  slug?: string
-  category?: string
-  min_investment?: string | number | null
-  expected_return?: string | number | null
-  price?: string | number | null
-  market_cap?: string | number | null
-  duration?: string | null
-  hours?: number | null
-  risk?: string | null
-  is_featured?: number | boolean
-  created_at?: string | null
-  raw: RawTesla | RawCoin
-}
-
-function useDebounce<T>(value: T, delay = 300) {
-  const [v, setV] = useState(value)
   useEffect(() => {
-    const t = setTimeout(() => setV(value), delay)
-    return () => clearTimeout(t)
-  }, [value, delay])
-  return v
-}
-
-export default function MyInvestmentsPage() {
-  // page/modal state
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [openNew, setOpenNew] = useState(false)
-  const [signupOpen, setSignupOpen] = useState(false)
-  const [detailOpen, setDetailOpen] = useState(false)
-  const [selectedInv, setSelectedInv] = useState<Investment | null>(null)
-
-  const [user, setUser] = useState<{ id: string | number; full_name?: string; name?: string; email?: string } | null>(null)
-const [tesla, setTesla] = useState<RawTesla[]>([])
-const [coins, setCoins] = useState<RawCoin[]>([])
-
-  // user + UI state
-  const [userName, setUserName] = useState<string>("Investor")
-  const [userEmail, setUserEmail] = useState<string>("")
-  const router = useRouter()
-
-  // data & filters
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const [query, setQuery] = useState("")
-  const debounced = useDebounce(query, 350)
-  const [category, setCategory] = useState<string>("All")
-
-  // pagination
-  const [page, setPage] = useState(1)
-  const perPage = 12
-
-  // load current user from localStorage
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("user") || localStorage.getItem("auth")
+    // load user from localStorage
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem("user") || localStorage.getItem("user_auth");
       if (raw) {
-        const parsed = JSON.parse(raw)
-        // Support both shapes: { user: {...} } or direct user object
-        const u = parsed?.user ?? parsed
-        if (u) {
-          setUser(u)
-          setUserName(u.full_name || u.name || "Investor")
-          setUserEmail(u.email || "")
+        try {
+          const parsed = JSON.parse(raw);
+          const u = parsed.user ?? parsed;
+          setUserName(u?.name ?? "Investor");
+          setUserEmail(u?.email ?? "");
+        } catch (e) {
+          // ignore
         }
       }
-    } catch (e) {
-      // ignore
-      console.log(e)
     }
-  }, [])
-
-  // fetch my investments once (server returns only user's investments)
-  useEffect(() => {
-    const ac = new AbortController()
-    const fetchMy = async () => {
-      try {
-        setLoading(true)
-        setError(null)
-        const url = new URL(`${BACKEND}/api/my-investments`)
-        // If backend expects pagination - we fetch more and paginate client-side
-        url.searchParams.set("limit", "500")
-        url.searchParams.set("offset", "0")
-
-        const token = localStorage.getItem("token") || JSON.parse(localStorage.getItem("auth") || "null")?.token
-        const headers: Record<string, string> = { "Content-Type": "application/json" }
-        if (token) headers["Authorization"] = `Bearer ${token}`
-
-        const res = await fetch(url.toString(), { headers, signal: ac.signal })
-        if (!res.ok) {
-          const txt = await res.text().catch(() => null)
-          throw new Error(`${res.status} ${txt || res.statusText}`)
-        }
-       const json = await res.json()
-const data: { tesla?: RawTesla[]; coins?: RawCoin[] } = json?.data ?? json
-
-       setTesla(Array.isArray(data?.tesla) ? data.tesla : [])
-setCoins(Array.isArray(data?.coins) ? data.coins : [])
-      } catch (err: any) {
-        if (err.name === "AbortError") return
-        console.error("fetchMyInvestments error", err)
-        setError(err.message || "Failed to load your investments")
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchMy()
-    return () => ac.abort()
-  }, [])
-
-  // unify the sets
- const unified = useMemo<Investment[]>(() => {
-  const t = tesla.map((r: RawTesla) => ({
-    id: `tesla:${r.tesla_id}`,
-    source: "tesla" as const,
-    name: r.investment_name,
-    slug: r.slug,
-    category: r.category,
-    min_investment: r.min_investment,
-    expected_return: r.expected_return,
-    duration: r.duration,
-    risk: r.risk,
-    is_featured: r.is_featured,
-    created_at: r.created_at,
-    raw: r,
-  }))
-
-  const c = coins.map((r: RawCoin) => ({
-    id: `coin:${r.coin_id}`,
-    source: "coin" as const,
-    name: r.coin_name,
-    slug: r.slug,
-    category: r.category,
-    price: r.price,
-    market_cap: r.market_cap,
-    hours: r.hours,
-    risk: r.risk,
-    is_featured: r.is_featured,
-    created_at: r.created_at,
-    raw: r,
-  }))
-
-  return [...t, ...c].sort((a, b) => {
-    const ta = a.created_at ? new Date(a.created_at).getTime() : 0
-    const tb = b.created_at ? new Date(b.created_at).getTime() : 0
-    return tb - ta
-  })
-}, [tesla, coins])
+  }, []);
 
 
-  // derive categories from unified data
-  const categories = useMemo(() => {
-    const set = new Set<string>(["All"])
-    unified.forEach((i) => {
-      if (i.category) set.add(i.category)
-    })
-    return Array.from(set)
-  }, [unified])
-
-  // apply client-side filters (debounced search + category)
-  const filtered = useMemo(() => {
-    const term = String(debounced || "").trim().toLowerCase()
-    let data = unified
-
-    if (category && category !== "All") {
-      data = data.filter((i) => String(i.category || "").toLowerCase() === category.toLowerCase())
-    }
-
-    if (term.length > 0) {
-      data = data.filter((i) => {
-        const name = (i.name || "").toString().toLowerCase()
-        const slug = (i.slug || "").toString().toLowerCase()
-        const overview = (i.raw?.overview || "").toString().toLowerCase()
-        const cat = (i.category || "").toString().toLowerCase()
-        return name.includes(term) || slug.includes(term) || overview.includes(term) || cat.includes(term)
-      })
-    }
-
-    return data
-  }, [unified, debounced, category])
-
-  const total = filtered.length
-  const pages = Math.max(1, Math.ceil(total / perPage))
-
-  const pageData = useMemo(() => {
-    const start = (page - 1) * perPage
-    return filtered.slice(start, start + perPage)
-  }, [filtered, page])
+    const auth = getStoredAuth();
+  const token = auth?.token || null;
+          const userFromStorage = auth?.user || null;
 
   useEffect(() => {
-    // reset page when filters/search change
-    setPage(1)
-  }, [debounced, category])
+    const fetchInvestments = async () => {
+      setLoading(true);
+      setError(null);
 
-  // helpers
-  const formatCurrency = (v?: string | number) => {
-    if (v == null || v === "") return "-"
-    try {
-      const n = Number(v)
-      return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    } catch {
-      return String(v)
-    }
-  }
-  const truncate = (s?: string, n = 120) => (s && s.length > n ? s.slice(0, n).trim() + "…" : s || "")
 
-  // click handlers
-  const openDetails = (inv: Investment) => {
-    setSelectedInv(inv)
-    setDetailOpen(true)
-  }
-
-const handleManage = (inv: Investment) => {
-  if (inv.source === "tesla") {
-    const rawTesla = inv.raw as RawTesla
-    router.push(`/manage/tesla/${rawTesla.tesla_id}`)
+          if (userFromStorage) {
+    setLocalUser(userFromStorage);
   } else {
-    const rawCoin = inv.raw as RawCoin
-    router.push(`/manage/coins/${rawCoin.coin_id}`)
+    setLocalUser(null);
   }
+
+      // resolve user id (fallback to 1)
+      const auth = getStoredAuth()
+const token = auth?.token || null
+
+let userId = 0
+
+// 1️⃣ Prefer user object (same as sidebar)
+if (auth?.user) {
+  userId = Number(
+    auth.user.user_id ??
+    auth.user.id ??
+    auth.user.uid ??
+    0
+  )
 }
+
+// 2️⃣ Fallback to JWT payload
+if (!userId && token) {
+  const payload = parseJwt(token)
+  userId = Number(
+    payload?.user_id ??
+    payload?.id ??
+    payload?.sub ??
+    0
+  )
+}
+
+// 3️⃣ Hard stop if still invalid
+if (!userId) {
+  console.warn("No valid userId found, redirecting to login")
+  router.push("/login")
+  return
+}
+
+     
+      try {
+        const res = await fetch(`${BACKEND}/api/fund/invest/user/${userId}`);
+        if (!res.ok) throw new Error(`Failed to fetch investments (${res.status})`);
+        const data: ApiInvestment[] = await res.json();
+
+        const mapped: Investment[] = (Array.isArray(data) ? data : []).map((d) => {
+          let coin_parsed = null;
+          if (d.coin_data) {
+            try {
+              coin_parsed = JSON.parse(d.coin_data);
+            } catch (e) {
+              coin_parsed = null;
+            }
+          }
+          return {
+            ...d,
+            amount: Number(Number(d.amount ?? 0)),
+            price_usd: d.price_usd ? Number(d.price_usd) : null,
+            expected_return: d.expected_return ? Number(d.expected_return) : null,
+            actual_return: d.actual_return ? Number(d.actual_return) : null,
+            roi_percent: d.roi_percent ? Number(d.roi_percent) : null,
+            coin_data_parsed: coin_parsed,
+          } as Investment;
+        });
+
+        setInvestments(mapped);
+      } catch (err: any) {
+        console.error("Failed to fetch investments:", err);
+        setError(String(err?.message ?? err));
+        setInvestments([]); // empty on error
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchInvestments();
+  }, []);
+
+  const totalInvested = useMemo(() => investments.reduce((s, i) => s + (i.amount || 0), 0), [investments]);
+
+  function fmt(n?: number | null) {
+    if (n == null) return "-";
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function statusBadge(status?: string) {
+    const base = "inline-flex items-center px-2 py-1 text-xs rounded-full font-medium";
+    switch (status) {
+      case "active":
+        return <span className={`${base} bg-emerald-800 text-emerald-300`}>Active</span>;
+      case "completed":
+        return <span className={`${base} bg-slate-800 text-slate-200`}>Completed</span>;
+      case "cancelled":
+        return <span className={`${base} bg-rose-800 text-rose-300`}>Cancelled</span>;
+      case "failed":
+        return <span className={`${base} bg-rose-900 text-rose-200`}>Failed</span>;
+      default:
+        return <span className={`${base} bg-white/6 text-slate-200`}>{status ?? "initialized"}</span>;
+    }
+  }
+
   return (
-    <div className="text-slate-100 antialiased">
+    <div className="flex min-h-screen text-slate-100 antialiased ">
       {/* Mobile toggle */}
       <div className="md:hidden fixed top-4 left-4 z-50">
-        <button onClick={() => setSidebarOpen((s) => !s)} className="p-2 rounded-lg bg-white/6 backdrop-blur text-slate-100">
+        <button
+          onClick={() => setSidebarOpen((s) => !s)}
+          className="p-2 rounded-lg bg-white/6 backdrop-blur text-slate-100"
+        >
           {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
         </button>
       </div>
 
       {/* Sidebar */}
-      <aside className={`fixed top-0 left-0 h-screen w-72 z-40 transform transition-transform duration-200 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0 `}>
-      <UserSidebar
-                active="my-investments"
-               onChange={(id) => { if (id === "logout") { localStorage.removeItem("user"); router.push("/") }}}
-                userName={userName}
-                userEmail={userEmail}
-                onLogout={() => {
-                  localStorage.removeItem("user");
-                  localStorage.removeItem("token");
-                  localStorage.removeItem("auth");
-                  router.push("/");
-                }}
-              />
+      <aside
+        className={`fixed top-0 left-0 h-screen w-72 z-40 transform transition-transform duration-200
+          ${sidebarOpen ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
+      >
+        <UserSidebar
+          active={active}
+          onChange={(id: string) => {
+            if (id === "logout") {
+              localStorage.removeItem("user_token");
+              router.push("/login");
+            } else {
+              setActive(id);
+            }
+            setSidebarOpen(false);
+          }}
+          userName={userName}
+          userEmail={userEmail}
+          onLogout={() => {
+            localStorage.removeItem("user_token");
+            localStorage.removeItem("user_token");
+            localStorage.removeItem("user_auth");
+            router.push("/");
+          }}
+        />
       </aside>
 
       {sidebarOpen && <div onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-black/40 md:hidden" />}
 
-      <main className="ml-0 md:ml-72 min-h-screen p-6">
-        <header className="mb-6">
-          <div className="flex justify-center">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-white/6 border border-white/10 max-w-6xl w-full mx-4">
-              <div className="p-2 rounded-full hover:bg-white/8 flex items-center justify-center">
-                <Search size={16} />
-              </div>
-
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search my investments..." className="w-full bg-transparent outline-none placeholder:text-slate-400 text-slate-100 text-sm" />
-              </div>
-
-              <div className="hidden sm:block w-px h-6 bg-white/10 mx-2" />
-
-              <div className="flex items-center gap-2 ml-1">
-                <div className="w-9 h-9 rounded-full bg-slate-700/30 flex items-center justify-center text-white font-medium">{String(userName || "I").slice(0, 1).toUpperCase()}</div>
-                <div className="hidden sm:flex flex-col leading-tight">
-                  <span className="text-sm font-medium text-white">{userName}</span>
-                  {userEmail && <span className="text-xs text-slate-400">{userEmail}</span>}
-                </div>
-              </div>
-            </div>
-          </div>
+      <main className="flex-1 p-6 md:ml-72">
+        <header className="mb-6 text-center">
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold">My Investments</h1>
+          <div className="mt-2 text-sm text-slate-400">Initialized & active investments (from /api/fund/invest/user/:id)</div>
         </header>
 
-        <h1 className="text-4xl py-3 text-center md:text-5xl lg:text-5xl font-bold mb-6">My Investments</h1>
+        <section className="max-w-6xl mx-auto space-y-6">
+          <div className="flex items-center justify-between gap-4">
+            <div className="rounded-2xl bg-white/5 p-4 border border-white/8 flex items-center gap-4">
+              <div className="text-sm text-slate-400">Total invested</div>
+              <div className="text-2xl font-semibold">${fmt(totalInvested)}</div>
+            </div>
 
-        {/* category buttons */}
-        <div className="max-w-6xl mx-auto mb-4 px-4">
-          <div className="flex flex-wrap gap-2 justify-center">
-            {categories.map((cat) => (
-              <button key={cat} onClick={() => setCategory(cat)} className={`px-3 py-2 rounded-full text-sm font-medium transition ${category === cat ? "bg-amber-500 text-black" : "bg-white/6 text-slate-100 hover:bg-white/8"}`}>
-                {cat}
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  // simple page-level refresh to re-fetch
+                  setLoading(true);
+                  setError(null);
+                  window.location.reload();
+                }}
+                className="px-3 py-2 rounded-xl bg-white/6 flex items-center gap-2"
+              >
+                <RefreshCw size={16} /> Refresh
               </button>
-            ))}
-          </div>
-        </div>
-
-        {/* card table */}
-        <div className="max-w-6xl mx-auto bg-white/5 rounded-2xl border border-white/8 overflow-hidden">
-          <div className="p-4 border-b border-white/6 flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-white">Your investments</h3>
-              <div className="text-xs text-slate-400">{total} items</div>
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  const rows = [
+                    ["investment_id", "coin", "amount", "status", "expected_return", "roi_percent", "created_at"],
+                    ...investments.map((i) => [
+                      String(i.investment_id ?? ""),
+                      `${i.coin_symbol ?? i.coin_name ?? "-"}`,
+                      String(i.amount ?? ""),
+                      String(i.status ?? ""),
+                      String(i.expected_return ?? ""),
+                      String(i.roi_percent ?? ""),
+                      String(i.created_at ?? ""),
+                    ]),
+                  ];
+                  const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+                  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `investments_${new Date().toISOString().slice(0,10)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="px-3 py-2 rounded-xl bg-white/6"
+              >
+                Export CSV
+              </a>
             </div>
-            <div className="text-xs text-slate-400">Sorted: <strong className="text-white">Recent</strong></div>
           </div>
 
-          {/* header */}
-          <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-3 text-slate-300 text-xs uppercase tracking-wide">
-            <div className="col-span-4">Name</div>
-            <div className="col-span-2">Category</div>
-            <div className="col-span-2 text-right">Price / Min</div>
-            <div className="col-span-2 text-right">Return / MarketCap</div>
-            <div className="col-span-1 text-right">Risk</div>
-            <div className="col-span-1 text-right">Actions</div>
-          </div>
-
-          {/* rows */}
-          <div>
-            {loading && <div className="p-6 text-center text-slate-400">Loading…</div>}
-            {error && <div className="p-4 text-center text-red-400">{error}</div>}
-            {!loading && pageData.length === 0 && <div className="p-6 text-center text-slate-400">No investments found.</div>}
-
-            {pageData.map((row) => (
-              <div key={row.id} role="button" onClick={() => openDetails(row)} className="grid grid-cols-1 md:grid-cols-12 gap-4 px-4 py-4 items-center hover:bg-white/4 transition cursor-pointer">
-                <div className="col-span-4">
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-slate-700/30 flex items-center justify-center text-sm font-semibold text-white">
-                      {row.source === "tesla" ? "F" : "C"}
+          {loading ? (
+            <div className="flex items-center gap-2 text-slate-400">
+              <Loader2 className="animate-spin" /> Loading investments...
+            </div>
+          ) : error ? (
+            <div className="text-rose-300">Failed to load investments: {error}</div>
+          ) : investments.length === 0 ? (
+            <div className="text-slate-400">No investments found.</div>
+          ) : (
+            <div className="grid gap-4">
+              {investments.map((inv) => (
+                <div key={inv.investment_id} className="p-4 rounded-2xl border border-white/8 bg-white/5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-12 h-12 rounded-lg bg-slate-700/30 flex items-center justify-center text-sm font-semibold text-white shrink-0">
+                      {(inv.coin_symbol ?? inv.coin_name ?? "C").slice(0,3)}
                     </div>
-                    <div>
-                      <div className="text-sm font-medium text-white">{row.name}</div>
-                      <div className="text-xs text-slate-400">{row.slug || "—"} • {row.source.toUpperCase()}</div>
-                      <div className="text-xs text-slate-400 mt-1 hidden md:block">{truncate(row.raw?.overview, 80)}</div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div className="text-lg font-semibold text-white truncate">{inv.coin_name ?? inv.coin_symbol ?? "Unknown"}</div>
+                        <div className="text-xs text-slate-400">{inv.coin_symbol}</div>
+                        <div className="ml-2">{statusBadge(inv.status!)}</div>
+                      </div>
+                      <div className="text-sm text-slate-400 truncate mt-1">
+                        Invested ${fmt(inv.amount)} • Price ${fmt(inv.price_usd ?? inv.coin_data_parsed?.price_usd ?? null)} • ROI {inv.roi_percent != null ? `${fmt(inv.roi_percent)}%` : "-"}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-2">{new Date(inv.created_at ?? "").toLocaleString()}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <div className="text-sm text-slate-400">Expected</div>
+                      <div className="text-lg font-semibold">${fmt(inv.expected_return ?? null)}</div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setSelected(inv)}
+                        className="px-3 py-2 rounded-lg bg-white/6 text-sm"
+                        title="Details"
+                      >
+                        <Info size={16} />
+                      </button>
+
+                      <a
+                        href={`https://t.me/share/url?url=&text=${encodeURIComponent(
+                          `I invested $${fmt(inv.amount)} in ${inv.coin_symbol || inv.coin_name}. Status: ${inv.status}.`
+                        )}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-2 rounded-lg bg-amber-500 text-black text-sm flex items-center gap-2"
+                        title="Share to Telegram"
+                      >
+                        <Share2 size={14} /> Share
+                      </a>
+
+                      <a
+                        href={inv.coin_name ? `https://coinlore.com/coins/${String(inv.coin_name).toLowerCase()}` : "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-2 rounded-lg bg-white/6 text-sm"
+                        title="Open coin page"
+                      >
+                        <ExternalLink size={14} />
+                      </a>
                     </div>
                   </div>
                 </div>
-
-                <div className="col-span-2 text-sm text-slate-300">{row.category || "—"}</div>
-
-                <div className="col-span-2 text-right text-sm">
-                  {row.source === "tesla" ? (row.min_investment ? formatCurrency(row.min_investment) : "-") : (row.price ? formatCurrency(row.price) : "-")}
-                </div>
-
-                <div className="col-span-2 text-right text-sm">
-                  {row.source === "tesla" ? (row.expected_return ? `${row.expected_return}%` : "-") : (row.market_cap ? formatCurrency(row.market_cap) : "-")}
-                </div>
-
-                <div className="col-span-1 text-right text-sm">{row.risk || "—"}</div>
-
-                <div className="col-span-1 text-right text-sm">
-                  <div className="flex items-center justify-end gap-2">
-                    <button onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-  e.stopPropagation()
-  openDetails(row)
-}}className="px-3 py-1 rounded-full bg-white text-slate-900 text-xs">View</button>
-
-                    {/* show Manage only if created_by matches current user */}
-                    {user?.id && String(row.raw?.created_by || "") === String(user.id) && (
-                      <button onClick={(e) => { e.stopPropagation(); handleManage(row) }} className="px-3 py-1 rounded-full bg-amber-500 text-black text-xs">Manage</button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* pagination */}
-          <div className="flex items-center justify-between p-4 border-t border-white/6">
-            <div className="text-sm text-slate-400">Page {page} of {pages}</div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="px-3 py-1 rounded bg-white/6 text-sm">Prev</button>
-              <button onClick={() => setPage((p) => Math.min(pages, p + 1))} disabled={page === pages} className="px-3 py-1 rounded bg-white/6 text-sm">Next</button>
+              ))}
             </div>
-          </div>
-        </div>
+          )}
+        </section>
       </main>
 
-      {/* Modals */}
-      <TeslaInvestmentModal isOpen={openNew} onClose={() => setOpenNew(false)} />
-      <SignupModal isOpen={signupOpen} onClose={() => setSignupOpen(false)} onSuccess={() => router.push("/dashboard")} />
-      <InvestmentDetailModal isOpen={detailOpen} onClose={() => { setDetailOpen(false); setSelectedInv(null) }} inv={selectedInv} />
+      {/* Details modal/drawer */}
+      {selected && (
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setSelected(null)} />
+          <div className="relative w-full max-w-3xl bg-slate-900 rounded-2xl border border-white/8 overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-white/6">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-lg bg-slate-700/30 flex items-center justify-center text-sm font-semibold text-white">
+                  {(selected.coin_symbol ?? selected.coin_name ?? "C").slice(0,3)}
+                </div>
+                <div>
+                  <div className="text-lg font-bold">{selected.coin_name} <span className="text-sm text-slate-400">({selected.coin_symbol})</span></div>
+                  <div className="text-xs text-slate-400">Invested ${fmt(selected.amount)} • Status: {selected.status}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setSelected(null)} className="px-3 py-1 rounded bg-white/6">Close</button>
+              </div>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-white/4 p-3 rounded">
+                  <div className="text-xs text-slate-400">Amount</div>
+                  <div className="text-lg font-medium">${fmt(selected.amount)}</div>
+                </div>
+                <div className="bg-white/4 p-3 rounded">
+                  <div className="text-xs text-slate-400">Expected return</div>
+                  <div className="text-lg font-medium">${fmt(selected.expected_return ?? null)}</div>
+                </div>
+                <div className="bg-white/4 p-3 rounded">
+                  <div className="text-xs text-slate-400">ROI %</div>
+                  <div className="text-lg font-medium">{selected.roi_percent != null ? `${fmt(selected.roi_percent)}%` : "-"}</div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-slate-400 mb-2">Coin payload</div>
+                <div className="bg-white/5 p-3 rounded max-h-56 overflow-auto text-xs text-slate-300">
+                  <pre className="whitespace-pre-wrap">{JSON.stringify(selected.coin_data_parsed ?? {}, null, 2)}</pre>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <a
+                  href={`https://t.me/share/url?url=&text=${encodeURIComponent(
+                    `I invested $${fmt(selected.amount)} in ${selected.coin_symbol || selected.coin_name}.`
+                  )}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-4 py-2 rounded bg-amber-500 text-black font-medium"
+                >
+                  Share to Telegram
+                </a>
+
+                <a
+                  href={selected.coin_name ? `https://coinlore.com/coins/${String(selected.coin_name).toLowerCase()}` : "#"}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-4 py-2 rounded bg-white/6"
+                >
+                  Open coin page
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  )
+  );
 }

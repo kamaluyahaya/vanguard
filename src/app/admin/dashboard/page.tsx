@@ -321,18 +321,6 @@ export default function AdminDashboard(): React.ReactElement {
       <div className="bg-transparent">
         <ClientsPanel />
       </div>
-
-      {/* {showPostTesla && (
-        <div className="bg-white/3 rounded-2xl p-4 shadow-sm">
-          <PostTeslaPanel />
-        </div>
-      )} */}
-
-      {/* {showPostCoins && (
-        <div className="bg-white/3 rounded-2xl p-4 shadow-sm">
-          <PostCoinsPanel />
-        </div>
-      )} */}
     </div>
   )
 }

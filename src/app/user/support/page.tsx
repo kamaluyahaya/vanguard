@@ -23,7 +23,7 @@ export default function SupportPage() {
 
     const getStoredAuth = () => {
     try {
-      const rawAuth = localStorage.getItem("auth")
+      const rawAuth = localStorage.getItem("user_auth")
       if (rawAuth) {
         try {
           const parsed = JSON.parse(rawAuth)
@@ -129,9 +129,9 @@ export default function SupportPage() {
                  userName={userName}
                  userEmail={userEmail}
                  onLogout={() => {
-                   localStorage.removeItem("user");
-                   localStorage.removeItem("token");
-                   localStorage.removeItem("auth");
+                   localStorage.removeItem("user_token");
+                   localStorage.removeItem("user_token");
+                   localStorage.removeItem("user_auth");
                    router.push("/");
                  }}
                />

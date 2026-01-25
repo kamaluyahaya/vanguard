@@ -26,8 +26,7 @@ type UserProfileShape = {
   firebase_uid?: string | null;
 };
 
-export default function UserProfilePage({ userId }: { userId?: number }) {
-  const id = userId ?? 1;
+export default function UserProfilePage() {
   const [user, setUser] = useState<UserProfileShape | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -39,32 +38,124 @@ export default function UserProfilePage({ userId }: { userId?: number }) {
   const [userName, setUserName] = useState("User");
   const [userEmail, setUserEmail] = useState("");
   const router = useRouter();
+  const [resolvedUserId, setResolvedUserId] = useState<number | null>(null)
+
+
+  const parseJwt = (token: string | null) => {
+  if (!token) return null
+  try {
+    const base64Url = token.split(".")[1]
+    if (!base64Url) return null
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/")
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    )
+    return JSON.parse(jsonPayload)
+  } catch {
+    return null
+  }
+}
+
+const getStoredAuth = () => {
+  try {
+    const rawAuth = localStorage.getItem("user_auth")
+    if (rawAuth) {
+      const parsed = JSON.parse(rawAuth)
+      if (parsed?.token || parsed?.user) return parsed
+    }
+
+    const token = localStorage.getItem("user_token")
+    const userRaw = localStorage.getItem("user")
+    const user = userRaw ? JSON.parse(userRaw) : null
+
+    if (token || user) return { token, user }
+    return null
+  } catch {
+    return null
+  }
+}
+
+useEffect(() => {
+  if (typeof window === "undefined") return
+
+  const auth = getStoredAuth()
+  const token = auth?.token || null
+
+  let uid = 0
+
+  // 1️⃣ Prefer user object
+  if (auth?.user) {
+    uid = Number(
+      auth.user.user_id ??
+      auth.user.id ??
+      auth.user.uid ??
+      0
+    )
+
+    setUserName(auth.user.full_name || auth.user.name || "User")
+    setUserEmail(auth.user.email || "")
+  }
+
+  // 2️⃣ Fallback to JWT
+  if (!uid && token) {
+    const payload = parseJwt(token)
+    uid = Number(
+      payload?.user_id ??
+      payload?.id ??
+      payload?.sub ??
+      0
+    )
+  }
+
+  // 3️⃣ Fail fast
+  if (!uid) {
+    console.warn("Invalid auth, redirecting")
+    router.push("/login")
+    return
+  }
+
+  setResolvedUserId(uid)
+}, [router])
+
+
 
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch(`${BACKEND}/api/customers/${id}`);
-        if (!res.ok) throw new Error(`Failed to load: ${res.status}`);
-        const data = await res.json();
-        setUser(data);
-        setForm({
-          email: data.email,
-          phone: data.phone ?? "",
-          full_name: data.full_name ?? "",
-          profile_image: data.profile_image ?? "",
-        });
-        setUserName(data.full_name || "User");
-        setUserEmail(data.email || "");
-      } catch (err) {
-        console.error(err);
-        setMessage("Could not load user profile — check backend URL and network.");
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [id]);
+  if (!resolvedUserId) return
+
+  const load = async () => {
+    setLoading(true)
+    setMessage(null)
+
+    try {
+      const res = await fetch(`${BACKEND}/api/customers/${resolvedUserId}`)
+      if (!res.ok) throw new Error(`Failed to load: ${res.status}`)
+
+      const data: UserProfileShape = await res.json()
+
+      setUser(data)
+      setForm({
+        email: data.email,
+        phone: data.phone ?? "",
+        full_name: data.full_name ?? "",
+        profile_image: data.profile_image ?? "",
+      })
+
+      setUserName(data.full_name || "User")
+      setUserEmail(data.email || "")
+    } catch (err) {
+      console.error(err)
+      setMessage("Could not load user profile — check backend or auth.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  load()
+}, [resolvedUserId])
+
 
   const handleChange = (k: keyof UserProfileShape, v: string) => {
     setForm((s) => ({ ...s, [k]: v }));
@@ -137,9 +228,9 @@ export default function UserProfilePage({ userId }: { userId?: number }) {
           userName={userName}
           userEmail={userEmail}
           onLogout={() => {
-            localStorage.removeItem("user");
-            localStorage.removeItem("token");
-            localStorage.removeItem("auth");
+            // localStorage.removeItem("user_toekn");
+            localStorage.removeItem("user_token");
+            localStorage.removeItem("user_auth");
             router.push("/");
           }}
         />
